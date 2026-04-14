@@ -41,7 +41,7 @@
 
 ### 3.1 既有 K 線資料庫（唯讀）
 
-**路徑**：`C:\Users\User\Desktop\Ace\coin\crypto_data.db`
+**路徑**：`D:\AI_Projects\Trading\script\coin\crypto_data.db`
 
 **klines 表結構**：
 ```sql

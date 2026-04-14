@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/AI_Projects/Trading/script/coin/**)",
+      "Read(//c/Users/qwert/Desktop/Ace/coin/**)",
+      "Read(//c/Users/User/Desktop/Ace/coin/**)",
+      "Bash(npm install:*)"
+    ]
+  }
+}
