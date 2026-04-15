@@ -2,10 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client';
 import { Chart } from './components/Chart';
 import { MarkPanel } from './components/MarkPanel';
+import { PositionFormModal } from './components/PositionFormModal';
+import { PositionPanel } from './components/PositionPanel';
 import { SubChart } from './components/SubChart';
 import { Toolbar } from './components/Toolbar';
-import type { Candle, DetectedRange, IndicatorPoint, LabelType, Mark, MAConfig, SwingPoint, SwingThresholds, SymbolInfo } from './types';
+import type { Candle, DetectedRange, IndicatorPoint, LabelType, Mark, MAConfig, Position, PositionDirection, SwingPoint, SwingThresholds, SymbolInfo } from './types';
 import { MA_COLOR_PALETTE } from './types';
+import { newPositionId } from './utils/positions';
 import { useLocalStorage } from './utils/useLocalStorage';
 
 const INITIAL_LIMIT = 500;
@@ -30,6 +33,9 @@ export default function App() {
   const [tdShow,          setTdShow]        = useLocalStorage<boolean>('tdShow', false);
   const [tdLookback,      setTdLookback]    = useLocalStorage<number>('tdLookback', 4);
   const [tdSetupLength,   setTdSetupLength] = useLocalStorage<number>('tdSetupLength', 9);
+  const [positions,       setPositions]     = useLocalStorage<Position[]>('positions', []);
+  const [showLastPrice,   setShowLastPrice] = useLocalStorage<boolean>('showLastPrice', true);
+  const [autoRefresh,     setAutoRefresh]   = useLocalStorage<boolean>('autoRefresh', true);
 
   // Non-persisted runtime state
   const [candles,   setCandles]   = useState<Candle[]>([]);
@@ -61,6 +67,25 @@ export default function App() {
   const [loadingMsg, setLoadingMsg] = useState('');
   const hasMoreRef = useRef(true);
 
+  type EntryDraft = {
+    direction: PositionDirection;
+    entry_ts: number;
+    entry_price: number;
+    tp_price: number;
+    sl_price: number;
+    entry_reason: string;
+  };
+  type ExitDraft = {
+    exit_ts: number;
+    exit_price: number;
+    exit_reason: string;
+  };
+  type ModalState =
+    | { kind: 'entry'; draft: EntryDraft }
+    | { kind: 'exit'; position: Position; draft: ExitDraft }
+    | null;
+  const [modal, setModal] = useState<ModalState>(null);
+
   // Load symbol list once
   useEffect(() => {
     api.getSymbols().then(setSymbols).catch(console.error);
@@ -83,13 +108,18 @@ export default function App() {
     api.getMarks(symbol, interval).then(setMarks).catch(console.error);
   }, [symbol, interval]);
 
-  // Fetch swings whenever symbol/interval/pivotN/thresholds change (and swings are visible)
+  // Latest candle timestamp — advances only when a brand-new bar arrives (from
+  // the poll below). Scroll-back that prepends historical candles keeps this
+  // unchanged, so derivative effects don't refetch on every scroll.
+  const latestTs = candles.length > 0 ? candles[candles.length - 1].t : 0;
+
+  // Fetch swings whenever symbol/interval/pivotN/thresholds/new-bar change (and swings are visible)
   useEffect(() => {
     if (!showSwings) { setSwings([]); return; }
     api.getSwings(symbol, interval, pivotN, 500, swingThresholds)
       .then(setSwings)
       .catch(console.error);
-  }, [symbol, interval, pivotN, showSwings, swingThresholds]);
+  }, [symbol, interval, pivotN, showSwings, swingThresholds, latestTs]);
 
   // Fetch indicator series for force_ratio sub-chart
   useEffect(() => {
@@ -97,7 +127,7 @@ export default function App() {
     api.getIndicatorSeries(symbol, interval)
       .then(res => setIndicatorSeries(res.series))
       .catch(console.error);
-  }, [symbol, interval, showForce]);
+  }, [symbol, interval, showForce, latestTs]);
 
   // Fetch consolidation ranges
   useEffect(() => {
@@ -105,7 +135,7 @@ export default function App() {
     api.getRanges(symbol, interval)
       .then(setDetectedRanges)
       .catch(console.error);
-  }, [symbol, interval, showRanges]);
+  }, [symbol, interval, showRanges, latestTs]);
 
   const refreshMarks = useCallback(() => {
     api.getMarks(symbol, interval).then(setMarks).catch(console.error);
@@ -182,10 +212,84 @@ export default function App() {
       .catch(console.error);
   }, [selectedCandle, marks, refreshMarks]);
 
+  // ── Position handlers ──
+  const openPositionModal = useCallback((direction: PositionDirection) => {
+    const base = selectedCandle ?? (candles.length > 0 ? candles[candles.length - 1] : null);
+    if (!base) return;
+    const entry = base.c;
+    // Default TP/SL: 1% move either side, on correct side for direction
+    const offset = entry * 0.01;
+    const tp = direction === 'long' ? entry + offset : entry - offset;
+    const sl = direction === 'long' ? entry - offset : entry + offset;
+    setModal({
+      kind: 'entry',
+      draft: {
+        direction,
+        entry_ts: base.t,
+        entry_price: entry,
+        tp_price: +tp.toFixed(8),
+        sl_price: +sl.toFixed(8),
+        entry_reason: '',
+      },
+    });
+  }, [selectedCandle, candles]);
+
+  const handleEntrySubmit = useCallback((d: EntryDraft) => {
+    const p: Position = {
+      id: newPositionId(),
+      symbol, interval,
+      direction: d.direction,
+      entry_ts: d.entry_ts,
+      entry_price: d.entry_price,
+      tp_price: d.tp_price,
+      sl_price: d.sl_price,
+      exit_ts: null,
+      exit_price: null,
+      entry_reason: d.entry_reason,
+      exit_reason: '',
+      created_at: new Date().toISOString(),
+    };
+    setPositions(prev => [...prev, p]);
+    setModal(null);
+  }, [symbol, interval, setPositions]);
+
+  const handleRequestClose = useCallback((position: Position) => {
+    const latest = candles.length > 0 ? candles[candles.length - 1] : null;
+    const exitTs = latest?.t ?? Date.now();
+    const exitPrice = latest?.c ?? position.entry_price;
+    setModal({
+      kind: 'exit',
+      position,
+      draft: { exit_ts: exitTs, exit_price: exitPrice, exit_reason: '' },
+    });
+  }, [candles]);
+
+  const handleExitSubmit = useCallback((d: ExitDraft) => {
+    if (modal?.kind !== 'exit') return;
+    const id = modal.position.id;
+    setPositions(prev => prev.map(p => p.id === id
+      ? { ...p, exit_ts: d.exit_ts, exit_price: d.exit_price, exit_reason: d.exit_reason }
+      : p,
+    ));
+    setModal(null);
+  }, [modal, setPositions]);
+
+  const handleDeletePosition = useCallback((id: string) => {
+    setPositions(prev => prev.filter(p => p.id !== id));
+  }, [setPositions]);
+
+  const handlePositionUpdate = useCallback((id: string, updates: Partial<Position>) => {
+    setPositions(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+  }, [setPositions]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (modal) return; // modal handles its own keys
+      // Position shortcuts: P open long, O open short — work with or without a selected candle
+      if (e.key === 'p' || e.key === 'P') { openPositionModal('long');  e.preventDefault(); return; }
+      if (e.key === 'o' || e.key === 'O') { openPositionModal('short'); e.preventDefault(); return; }
       // Arrow keys move selection one candle — work even without a prior selection
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         if (candles.length === 0) return;
@@ -222,11 +326,12 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedCandle, candles, handleAddMark, deleteMarksOnSelected]);
+  }, [selectedCandle, candles, handleAddMark, deleteMarksOnSelected, openPositionModal, modal]);
 
   // Auto-refresh: poll the last few candles periodically and merge into state.
   // Pauses when tab is hidden so background tabs don't hammer the API.
   useEffect(() => {
+    if (!autoRefresh) return;
     const pollOnce = () => {
       if (document.hidden) return;
       api.getKlines(symbol, interval, { limit: AUTO_REFRESH_TAIL })
@@ -244,7 +349,7 @@ export default function App() {
     };
     const id = window.setInterval(pollOnce, AUTO_REFRESH_MS);
     return () => window.clearInterval(id);
-  }, [symbol, interval]);
+  }, [symbol, interval, autoRefresh]);
 
   // Date jump
   const handleDateJump = useCallback((ts: number) => {
@@ -283,6 +388,12 @@ export default function App() {
         onToggleTD={() => setTdShow(v => !v)}
         onTDLookbackChange={setTdLookback}
         onTDSetupLengthChange={setTdSetupLength}
+        showLastPrice={showLastPrice}
+        onToggleLastPrice={() => setShowLastPrice(v => !v)}
+        autoRefresh={autoRefresh}
+        onToggleAutoRefresh={() => setAutoRefresh(v => !v)}
+        onOpenLong={() => openPositionModal('long')}
+        onOpenShort={() => openPositionModal('short')}
       />
 
       {loadingMsg && (
@@ -309,6 +420,9 @@ export default function App() {
             showMA={showMA}
             maType={maType}
             tdConfig={tdConfig}
+            positions={positions.filter(p => p.symbol === symbol && p.interval === interval)}
+            onPositionUpdate={handlePositionUpdate}
+            showLastPrice={showLastPrice}
             selectedCandleTs={selectedCandle?.t ?? null}
             rangeStartTs={rangeStart?.t ?? null}
             rangeEndTs={rangeEnd?.t ?? null}
@@ -343,7 +457,33 @@ export default function App() {
           onAddMark={handleAddMark}
           onDeleteMark={handleDeleteMark}
         />
+        <PositionPanel
+          symbol={symbol}
+          interval={interval}
+          positions={positions}
+          currentPrice={candles.length > 0 ? candles[candles.length - 1].c : null}
+          onRequestClose={handleRequestClose}
+          onDelete={handleDeletePosition}
+        />
       </div>
+
+      {modal?.kind === 'entry' && (
+        <PositionFormModal
+          mode="entry"
+          draft={modal.draft}
+          onSubmit={handleEntrySubmit}
+          onCancel={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'exit' && (
+        <PositionFormModal
+          mode="exit"
+          position={modal.position}
+          draft={modal.draft}
+          onSubmit={handleExitSubmit}
+          onCancel={() => setModal(null)}
+        />
+      )}
     </div>
   );
 }

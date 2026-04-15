@@ -122,6 +122,24 @@ export interface SwingThresholds {
   departureAtr: number;
 }
 
+export type PositionDirection = 'long' | 'short';
+
+export interface Position {
+  id: string;
+  symbol: string;
+  interval: string;
+  direction: PositionDirection;
+  entry_ts: number;            // ms
+  entry_price: number;
+  tp_price: number;
+  sl_price: number;
+  exit_ts: number | null;
+  exit_price: number | null;
+  entry_reason: string;
+  exit_reason: string;
+  created_at: string;          // ISO
+}
+
 export const MA_COLOR_PALETTE = [
   '#2962FF', '#FF9800', '#E91E63', '#00BCD4', '#8BC34A', '#FFEB3B', '#9C27B0', '#F44336',
 ];

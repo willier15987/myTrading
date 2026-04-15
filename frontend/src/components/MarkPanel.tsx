@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { Candle, CandleIndicators, LabelType, Mark, RangeIndicators } from '../types';
 import { LABEL_META } from '../types';
+import { useLocalStorage } from '../utils/useLocalStorage';
 
 const C = {
   bg: '#1e222d',
@@ -80,6 +81,7 @@ export function MarkPanel({ symbol, interval, selectedCandle, rangeStart, rangeE
   const [rangeInd, setRangeInd] = useState<RangeIndicators | null>(null);
   const [loadingC, setLoadingC] = useState(false);
   const [loadingR, setLoadingR] = useState(false);
+  const [collapsed, setCollapsed] = useLocalStorage<boolean>('markPanelCollapsed', false);
 
   // Single-candle indicators
   useEffect(() => {
@@ -119,9 +121,32 @@ export function MarkPanel({ symbol, interval, selectedCandle, rangeStart, rangeE
     return () => { alive = false; };
   }, [selectedCandle?.t, rangeStart?.t, rangeEnd?.t, symbol, interval]);
 
+  if (collapsed) {
+    return (
+      <div style={{
+        width: 24, minWidth: 24, background: C.bg, borderLeft: `1px solid ${C.border}`,
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        cursor: 'pointer', flexShrink: 0, paddingTop: 10,
+      }} onClick={() => setCollapsed(false)} title="展開標記側欄">
+        <span style={{ color: C.dim, fontSize: 14, writingMode: 'vertical-rl' as const }}>◀ 標記</span>
+      </div>
+    );
+  }
+
+  const collapseBtn = (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 8px', borderBottom: `1px solid ${C.border}` }}>
+      <button
+        onClick={() => setCollapsed(true)}
+        style={{ background: 'transparent', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 12, padding: '2px 6px' }}
+        title="收起"
+      >▶</button>
+    </div>
+  );
+
   if (!selectedCandle && !rangeStart) {
     return (
       <div style={S.panel}>
+        {collapseBtn}
         <div style={S.placeholder}>
           點擊 K 線查看指標<br />
           <small>Shift + 點擊 設定區間起點</small><br />
@@ -138,6 +163,7 @@ export function MarkPanel({ symbol, interval, selectedCandle, rangeStart, rangeE
 
   return (
     <div style={S.panel}>
+      {collapseBtn}
 
       {/* ── Candle Info ── */}
       {selectedCandle && (
@@ -224,7 +250,13 @@ export function MarkPanel({ symbol, interval, selectedCandle, rangeStart, rangeE
             {(Object.entries(LABEL_META) as [LabelType, (typeof LABEL_META)[LabelType]][]).map(([type, meta]) => (
               <button
                 key={type}
-                onClick={() => onAddMark(type, type.includes('swing') ? selectedCandle.c : undefined)}
+                onClick={() => {
+                  const price =
+                    type === 'valid_swing_high' ? selectedCandle.h :
+                    type === 'valid_swing_low'  ? selectedCandle.l :
+                    undefined;
+                  onAddMark(type, price);
+                }}
                 style={{
                   padding: '4px 9px',
                   borderRadius: 4,

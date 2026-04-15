@@ -114,6 +114,12 @@ interface ToolbarProps {
   onToggleTD: () => void;
   onTDLookbackChange: (n: number) => void;
   onTDSetupLengthChange: (n: number) => void;
+  showLastPrice: boolean;
+  onToggleLastPrice: () => void;
+  autoRefresh: boolean;
+  onToggleAutoRefresh: () => void;
+  onOpenLong: () => void;
+  onOpenShort: () => void;
 }
 
 export function Toolbar({
@@ -123,6 +129,7 @@ export function Toolbar({
   onSymbolChange, onIntervalChange, onDateJump,
   onToggleSwings, onPivotNChange, onSwingThresholdsChange, onToggleForce, onToggleRanges,
   onToggleMA, onMALengthsChange, onMATypeChange, onToggleTD, onTDLookbackChange, onTDSetupLengthChange,
+  showLastPrice, onToggleLastPrice, autoRefresh, onToggleAutoRefresh, onOpenLong, onOpenShort,
 }: ToolbarProps) {
   const [query, setQuery] = useState(symbol);
   const [open, setOpen] = useState(false);
@@ -362,6 +369,50 @@ export function Toolbar({
           />
         </>
       )}
+
+      <div style={S.divider} />
+
+      {/* Last-price line toggle */}
+      <button
+        style={ivBtnStyle(showLastPrice)}
+        onClick={onToggleLastPrice}
+        title="顯示/隱藏最新價格水平線"
+      >
+        現價線
+      </button>
+
+      {/* Auto-refresh toggle */}
+      <button
+        style={ivBtnStyle(autoRefresh)}
+        onClick={onToggleAutoRefresh}
+        title="開啟/關閉自動更新最新 K 線 (30 秒)"
+      >
+        自動更新
+      </button>
+
+      <div style={S.divider} />
+
+      {/* Open long / short buttons */}
+      <button
+        style={{
+          padding: '3px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
+          fontSize: 13, background: '#26a69a', color: '#fff', fontWeight: 600, flexShrink: 0,
+        }}
+        onClick={onOpenLong}
+        title="開多頭倉位 (快捷鍵 P)"
+      >
+        開多 P
+      </button>
+      <button
+        style={{
+          padding: '3px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
+          fontSize: 13, background: '#ef5350', color: '#fff', fontWeight: 600, flexShrink: 0,
+        }}
+        onClick={onOpenShort}
+        title="開空頭倉位 (快捷鍵 O)"
+      >
+        開空 O
+      </button>
     </div>
   );
 }

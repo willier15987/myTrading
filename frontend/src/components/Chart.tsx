@@ -13,9 +13,10 @@ import {
 
 // Price line handle returned by series.createPriceLine()
 type PriceLineHandle = ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>;
-import type { Candle, DetectedRange, LabelType, Mark, MAConfig, SwingPoint, TDConfig } from '../types';
+import type { Candle, DetectedRange, LabelType, Mark, MAConfig, Position, SwingPoint, TDConfig } from '../types';
 import { LABEL_META } from '../types';
 import { formatTimeTW } from '../utils/time';
+import { pnlFraction } from '../utils/positions';
 
 interface MarkerConfig {
   position: 'aboveBar' | 'belowBar';
@@ -89,16 +90,21 @@ interface ChartProps {
   showMA: boolean;
   maType: 'sma' | 'ema';
   tdConfig: TDConfig;
+  positions: Position[];
+  showLastPrice: boolean;
   selectedCandleTs: number | null;
   rangeStartTs: number | null;
   rangeEndTs: number | null;
   onCandleClick: (candle: Candle, isShift: boolean) => void;
   onNeedMoreData: (beforeTs: number) => void;
   onVisibleLogicalRangeChange?: (from: number, to: number) => void;
+  onPositionUpdate?: (id: string, updates: Partial<Position>) => void;
   jumpToTs: number | null;
 }
 
-export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, maConfigs, showMA, maType, tdConfig, selectedCandleTs, rangeStartTs, rangeEndTs, onCandleClick, onNeedMoreData, onVisibleLogicalRangeChange, jumpToTs }: ChartProps) {
+type PosField = 'entry_price' | 'tp_price' | 'sl_price';
+
+export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, maConfigs, showMA, maType, tdConfig, positions, showLastPrice, selectedCandleTs, rangeStartTs, rangeEndTs, onCandleClick, onNeedMoreData, onVisibleLogicalRangeChange, onPositionUpdate, jumpToTs }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
   const seriesRef    = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -110,14 +116,20 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
   const candlesRef   = useRef<Candle[]>([]);
   const rangeBandsRef = useRef<ISeriesApi<'Line'>[]>([]);
   const maSeriesRef   = useRef<ISeriesApi<'Line'>[]>([]);
+  const positionLinesRef = useRef<PriceLineHandle[]>([]);
+  const dragOverlayRef   = useRef<HTMLDivElement>(null);
+  const handlesRef       = useRef<Map<string, HTMLDivElement>>(new Map());
+  const draggingRef      = useRef<{ key: string; positionId: string; field: PosField; price: number } | null>(null);
 
   // Keep latest callbacks accessible inside stable chart event handlers
   const onClickRef       = useRef(onCandleClick);
   const onMoreRef        = useRef(onNeedMoreData);
   const onLogicalRangeRef = useRef(onVisibleLogicalRangeChange);
+  const onPositionUpdateRef = useRef(onPositionUpdate);
   useLayoutEffect(() => { onClickRef.current        = onCandleClick; });
   useLayoutEffect(() => { onMoreRef.current         = onNeedMoreData; });
   useLayoutEffect(() => { onLogicalRangeRef.current = onVisibleLogicalRangeChange; });
+  useLayoutEffect(() => { onPositionUpdateRef.current = onPositionUpdate; });
 
   // Track shift key
   useEffect(() => {
@@ -211,17 +223,27 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
 
   // ── Update candles data ──
   useEffect(() => {
-    if (!seriesRef.current || candles.length === 0) return;
+    if (!seriesRef.current) return;
+    if (candles.length === 0) {
+      // Full reset (e.g. symbol/interval change) — clear first-ts tracking so the
+      // next load is treated as a fresh reload rather than a tail merge.
+      prevFirstTsRef.current = null;
+      return;
+    }
 
-    const newFirstTs  = candles[0].t;
-    const isPrepend   = prevFirstTsRef.current !== null && newFirstTs < prevFirstTsRef.current;
+    const newFirstTs   = candles[0].t;
+    const prevFirstTs  = prevFirstTsRef.current;
+    const isPrepend    = prevFirstTs !== null && newFirstTs < prevFirstTs;
+    const isTailMerge  = prevFirstTs !== null && newFirstTs === prevFirstTs;
     prevFirstTsRef.current = newFirstTs;
 
     isLoadingMore.current = false;
     candlesRef.current = candles;
 
-    // Save range only when prepending (to prevent scroll jump)
-    const visRange = isPrepend ? chartRef.current?.timeScale().getVisibleRange() : null;
+    // Preserve range on prepend (scroll-back) and on tail merge (auto-refresh),
+    // so the user's view doesn't jump back to "now" while reviewing history.
+    const preserveRange = isPrepend || isTailMerge;
+    const visRange = preserveRange ? chartRef.current?.timeScale().getVisibleRange() : null;
 
     const data: CandlestickData[] = candles.map(c => ({
       time: (c.t / 1000) as UTCTimestamp,
@@ -343,10 +365,36 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
       }
     }
 
+    // ── 6. Position entry / exit markers ──
+    for (const p of positions) {
+      const entryTs = (p.entry_ts / 1000) as UTCTimestamp;
+      const isLong = p.direction === 'long';
+      markers.push({
+        time: entryTs,
+        position: isLong ? 'belowBar' : 'aboveBar',
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        color: isLong ? '#26a69a' : '#ef5350',
+        text: isLong ? '開多' : '開空',
+        size: 2,
+        id: `pos-entry-${p.id}`,
+      });
+      if (p.exit_ts != null) {
+        markers.push({
+          time: (p.exit_ts / 1000) as UTCTimestamp,
+          position: isLong ? 'aboveBar' : 'belowBar',
+          shape: 'square',
+          color: '#787b86',
+          text: '平倉',
+          size: 1,
+          id: `pos-exit-${p.id}`,
+        });
+      }
+    }
+
     // lightweight-charts requires markers sorted by time
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     seriesRef.current.setMarkers(markers);
-  }, [marks, swings, showSwings, candles, tdConfig]);
+  }, [marks, swings, showSwings, candles, tdConfig, positions]);
 
   // ── Moving averages ──
   useEffect(() => {
@@ -462,6 +510,165 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
     }
   }, [ranges, showRanges]);
 
+  // ── Position price lines (entry / TP / SL) for open positions matching current view ──
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    positionLinesRef.current.forEach(pl => {
+      try { seriesRef.current?.removePriceLine(pl); } catch { /* ignore */ }
+    });
+    positionLinesRef.current = [];
+
+    const currentPrice = candles.length > 0 ? candles[candles.length - 1].c : null;
+
+    for (const p of positions) {
+      if (p.exit_ts != null) continue; // only draw open positions on chart
+      const dirColor = p.direction === 'long' ? '#26a69a' : '#ef5350';
+      const pnl = currentPrice != null ? pnlFraction(p.direction, p.entry_price, currentPrice) : null;
+      const pnlText = pnl != null ? ` (${(pnl * 100).toFixed(2)}%)` : '';
+
+      const entryLine = seriesRef.current.createPriceLine({
+        price: p.entry_price,
+        color: dirColor,
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: `${p.direction === 'long' ? '多' : '空'}${pnlText}`,
+      });
+      const tpLine = seriesRef.current.createPriceLine({
+        price: p.tp_price,
+        color: '#26a69a',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'TP',
+      });
+      const slLine = seriesRef.current.createPriceLine({
+        price: p.sl_price,
+        color: '#ef5350',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'SL',
+      });
+      positionLinesRef.current.push(entryLine, tpLine, slLine);
+    }
+  }, [positions, candles]);
+
+  // ── Toggle last-price horizontal line + right-axis label ──
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    seriesRef.current.applyOptions({
+      priceLineVisible: showLastPrice,
+      lastValueVisible: showLastPrice,
+    });
+  }, [showLastPrice]);
+
+  // ── Draggable handles for open positions (TP/SL/Entry) ──
+  // Imperative DOM + RAF loop because lightweight-charts v4 exposes no priceScale change event.
+  useEffect(() => {
+    const overlay = dragOverlayRef.current;
+    if (!overlay) return;
+
+    const startDrag = (e: MouseEvent, positionId: string, field: PosField, initialPrice: number, labelPrefix: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const key = `${positionId}:${field}`;
+      draggingRef.current = { key, positionId, field, price: initialPrice };
+      const handle = handlesRef.current.get(key);
+      if (handle) handle.style.outline = '2px solid rgba(255,255,255,0.6)';
+
+      const onMove = (ev: MouseEvent) => {
+        const drag = draggingRef.current;
+        if (!drag || !seriesRef.current || !overlay) return;
+        const rect = overlay.getBoundingClientRect();
+        const y = ev.clientY - rect.top;
+        const price = seriesRef.current.coordinateToPrice(y);
+        if (price == null || !Number.isFinite(price)) return;
+        drag.price = price as number;
+        const h = handlesRef.current.get(drag.key);
+        if (h) {
+          h.dataset.price = String(price);
+          h.textContent = `${labelPrefix} ${(price as number).toFixed(4)}`;
+        }
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        const drag = draggingRef.current;
+        const h = drag ? handlesRef.current.get(drag.key) : null;
+        if (h) h.style.outline = '';
+        if (drag && Number.isFinite(drag.price)) {
+          onPositionUpdateRef.current?.(drag.positionId, { [drag.field]: drag.price } as Partial<Position>);
+        }
+        draggingRef.current = null;
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    };
+
+    const wantKeys = new Set<string>();
+    const openPositions = positions.filter(p => p.exit_ts == null);
+    for (const p of openPositions) {
+      const entryColor = p.direction === 'long' ? '#26a69a' : '#ef5350';
+      const entryLabel = p.direction === 'long' ? '多' : '空';
+      const specs: { field: PosField; color: string; label: string }[] = [
+        { field: 'entry_price', color: entryColor, label: entryLabel },
+        { field: 'tp_price',    color: '#26a69a', label: 'TP' },
+        { field: 'sl_price',    color: '#ef5350', label: 'SL' },
+      ];
+      for (const { field, color, label } of specs) {
+        const key = `${p.id}:${field}`;
+        wantKeys.add(key);
+        let h = handlesRef.current.get(key);
+        if (!h) {
+          h = document.createElement('div');
+          h.style.cssText = [
+            'position:absolute', 'right:56px', 'transform:translateY(-50%)',
+            'padding:2px 8px', 'border-radius:3px', 'font-size:11px',
+            'font-family:monospace', 'cursor:ns-resize', 'z-index:20',
+            'color:#fff', 'user-select:none', 'pointer-events:auto',
+            'box-shadow:0 1px 3px rgba(0,0,0,0.5)',
+          ].join(';');
+          overlay.appendChild(h);
+          handlesRef.current.set(key, h);
+        }
+        h.style.background = color;
+        h.dataset.price = String(p[field]);
+        h.textContent = `${label} ${Number(p[field]).toFixed(4)}`;
+        // Replace listener on every render so it closes over the latest labelPrefix
+        const onDown = (ev: MouseEvent) => startDrag(ev, p.id, field, p[field], label);
+        (h as HTMLDivElement & { _onDown?: (e: MouseEvent) => void })._onDown
+          && h.removeEventListener('mousedown', (h as HTMLDivElement & { _onDown?: (e: MouseEvent) => void })._onDown!);
+        h.addEventListener('mousedown', onDown);
+        (h as HTMLDivElement & { _onDown?: (e: MouseEvent) => void })._onDown = onDown;
+      }
+    }
+    // Remove handles no longer present
+    for (const [key, el] of handlesRef.current) {
+      if (!wantKeys.has(key)) { el.remove(); handlesRef.current.delete(key); }
+    }
+  }, [positions]);
+
+  // RAF: continuously reposition handles based on priceToCoordinate (price scale has no event)
+  useEffect(() => {
+    let rafId = 0;
+    const tick = () => {
+      const series = seriesRef.current;
+      if (series && handlesRef.current.size > 0) {
+        for (const el of handlesRef.current.values()) {
+          const price = Number(el.dataset.price);
+          if (!Number.isFinite(price)) { el.style.display = 'none'; continue; }
+          const y = series.priceToCoordinate(price);
+          if (y == null) { el.style.display = 'none'; }
+          else { el.style.display = ''; el.style.top = `${y}px`; }
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
+
   // ── Jump to timestamp ──
   useEffect(() => {
     if (jumpToTs == null || !chartRef.current || candlesRef.current.length === 0) return;
@@ -484,5 +691,10 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
     });
   }, [jumpToTs]);
 
-  return <div ref={containerRef} style={{ flex: 1, minWidth: 0, minHeight: 0 }} />;
+  return (
+    <div style={{ flex: 1, minWidth: 0, minHeight: 0, position: 'relative' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <div ref={dragOverlayRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+    </div>
+  );
 }
