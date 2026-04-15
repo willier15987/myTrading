@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import type { SymbolInfo } from '../types';
+import type { SwingThresholds, SymbolInfo } from '../types';
 
 const INTERVALS = ['15m', '1h', '4h', '1d'] as const;
 const PIVOT_N_OPTIONS = [3, 5, 8, 10] as const;
@@ -91,26 +91,54 @@ interface ToolbarProps {
   symbols: SymbolInfo[];
   showSwings: boolean;
   pivotN: number;
+  swingThresholds: SwingThresholds;
   showForce: boolean;
   showRanges: boolean;
+  showMA: boolean;
+  maLengths: number[];
+  maType: 'sma' | 'ema';
+  tdShow: boolean;
+  tdLookback: number;
+  tdSetupLength: number;
   onSymbolChange: (s: string) => void;
   onIntervalChange: (i: string) => void;
   onDateJump: (ts: number) => void;
   onToggleSwings: () => void;
   onPivotNChange: (n: number) => void;
+  onSwingThresholdsChange: (t: SwingThresholds) => void;
   onToggleForce: () => void;
   onToggleRanges: () => void;
+  onToggleMA: () => void;
+  onMALengthsChange: (lens: number[]) => void;
+  onMATypeChange: (t: 'sma' | 'ema') => void;
+  onToggleTD: () => void;
+  onTDLookbackChange: (n: number) => void;
+  onTDSetupLengthChange: (n: number) => void;
 }
 
 export function Toolbar({
   symbol, interval, symbols,
-  showSwings, pivotN, showForce, showRanges,
+  showSwings, pivotN, swingThresholds, showForce, showRanges,
+  showMA, maLengths, maType, tdShow, tdLookback, tdSetupLength,
   onSymbolChange, onIntervalChange, onDateJump,
-  onToggleSwings, onPivotNChange, onToggleForce, onToggleRanges,
+  onToggleSwings, onPivotNChange, onSwingThresholdsChange, onToggleForce, onToggleRanges,
+  onToggleMA, onMALengthsChange, onMATypeChange, onToggleTD, onTDLookbackChange, onTDSetupLengthChange,
 }: ToolbarProps) {
   const [query, setQuery] = useState(symbol);
   const [open, setOpen] = useState(false);
+  const [maText, setMaText] = useState(maLengths.join(','));
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setMaText(maLengths.join(',')); }, [maLengths]);
+
+  const commitMaText = () => {
+    const parsed = maText
+      .split(/[,\s]+/)
+      .map(s => parseInt(s, 10))
+      .filter(n => Number.isFinite(n) && n > 0 && n <= 1000);
+    if (parsed.length > 0) onMALengthsChange(parsed);
+    else setMaText(maLengths.join(','));
+  };
 
   useEffect(() => { setQuery(symbol); }, [symbol]);
 
@@ -191,7 +219,7 @@ export function Toolbar({
         波段
       </button>
 
-      {/* Pivot N selector — only when swings are on */}
+      {/* Pivot N + swing validity thresholds — only when swings are on */}
       {showSwings && (
         <>
           <span style={S.label}>N=</span>
@@ -205,6 +233,36 @@ export function Toolbar({
               <option key={n} value={n}>{n}</option>
             ))}
           </select>
+          <span style={S.label} title="推進段 force_ratio 門檻（愈大愈嚴）">推</span>
+          <input
+            type="number" step={0.05} min={0} max={1}
+            style={{ ...S.dateInput, width: 56 }}
+            value={swingThresholds.approach}
+            onChange={e => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v) && v >= 0 && v <= 1) onSwingThresholdsChange({ ...swingThresholds, approach: v });
+            }}
+          />
+          <span style={S.label} title="反轉段 force_ratio 門檻（愈大愈嚴）">反</span>
+          <input
+            type="number" step={0.05} min={0} max={1}
+            style={{ ...S.dateInput, width: 56 }}
+            value={swingThresholds.rejection}
+            onChange={e => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v) && v >= 0 && v <= 1) onSwingThresholdsChange({ ...swingThresholds, rejection: v });
+            }}
+          />
+          <span style={S.label} title="離場距離需超過 N × ATR">ATR×</span>
+          <input
+            type="number" step={0.1} min={0} max={5}
+            style={{ ...S.dateInput, width: 56 }}
+            value={swingThresholds.departureAtr}
+            onChange={e => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v) && v >= 0 && v <= 5) onSwingThresholdsChange({ ...swingThresholds, departureAtr: v });
+            }}
+          />
         </>
       )}
 
@@ -227,6 +285,83 @@ export function Toolbar({
       >
         橫盤
       </button>
+
+      <div style={S.divider} />
+
+      {/* MA toggle */}
+      <button
+        style={ivBtnStyle(showMA)}
+        onClick={onToggleMA}
+        title="顯示/隱藏移動平均線"
+      >
+        均線
+      </button>
+
+      {showMA && (
+        <>
+          <select
+            style={S.select}
+            value={maType}
+            onChange={e => onMATypeChange(e.target.value as 'sma' | 'ema')}
+            title="簡單移動平均 vs 指數移動平均"
+          >
+            <option value="sma">SMA</option>
+            <option value="ema">EMA</option>
+          </select>
+          <span style={S.label}>長度</span>
+          <input
+            style={{ ...S.dateInput, width: 120 }}
+            value={maText}
+            onChange={e => setMaText(e.target.value)}
+            onBlur={commitMaText}
+            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+            placeholder="20,60,200"
+            title="逗號分隔；例：20,60,200"
+          />
+        </>
+      )}
+
+      <div style={S.divider} />
+
+      {/* TD toggle */}
+      <button
+        style={ivBtnStyle(tdShow)}
+        onClick={onToggleTD}
+        title="顯示/隱藏 TD Sequential Setup"
+      >
+        TD
+      </button>
+
+      {tdShow && (
+        <>
+          <span style={S.label}>比對</span>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            style={{ ...S.dateInput, width: 52 }}
+            value={tdLookback}
+            onChange={e => {
+              const n = parseInt(e.target.value, 10);
+              if (Number.isFinite(n) && n >= 1 && n <= 20) onTDLookbackChange(n);
+            }}
+            title="與前 N 根比較（標準 4）"
+          />
+          <span style={S.label}>長度</span>
+          <input
+            type="number"
+            min={3}
+            max={30}
+            style={{ ...S.dateInput, width: 52 }}
+            value={tdSetupLength}
+            onChange={e => {
+              const n = parseInt(e.target.value, 10);
+              if (Number.isFinite(n) && n >= 3 && n <= 30) onTDSetupLengthChange(n);
+            }}
+            title="Setup 完成所需連續根數（標準 9）"
+          />
+        </>
+      )}
     </div>
   );
 }

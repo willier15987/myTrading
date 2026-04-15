@@ -13,6 +13,9 @@ def get_swings(
     interval: str,
     pivot_n: int = Query(5, ge=2, le=20),
     limit: int = Query(500, ge=100, le=2000),
+    approach: float = Query(0.5,  ge=0.0, le=1.0, description="推進段 force_ratio 門檻"),
+    rejection: float = Query(0.55, ge=0.0, le=1.0, description="反轉段 force_ratio 門檻（對稱）"),
+    departure_atr: float = Query(0.5, ge=0.0, le=5.0, description="離場 ATR 倍數門檻"),
 ):
     """
     Detect geometric pivot highs/lows in the most recent `limit` candles
@@ -44,15 +47,23 @@ def get_swings(
     atr_value = calc_atr(candles, 14)
     pivot_indices = find_pivots(candles, pivot_n)
 
+    params = {
+        "lookback": 5,
+        "lookforward": 5,
+        "min_approach_quality": approach,
+        "min_rejection_force": rejection,
+        "min_departure_atr": departure_atr,
+    }
+
     results = []
     for pivot_type, idx in pivot_indices:
         c = candles[idx]
         price = c['high'] if pivot_type == 'high' else c['low']
 
         if pivot_type == 'high':
-            is_valid, details = is_valid_swing_high(candles, idx, atr_value)
+            is_valid, details = is_valid_swing_high(candles, idx, atr_value, params)
         else:
-            is_valid, details = is_valid_swing_low(candles, idx, atr_value)
+            is_valid, details = is_valid_swing_low(candles, idx, atr_value, params)
 
         results.append({
             'timestamp': c['timestamp'],

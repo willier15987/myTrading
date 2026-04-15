@@ -1,7 +1,9 @@
 import sqlite3
 from pathlib import Path
 
-CRYPTO_DB_PATH = r"D:\AI_Projects\Trading\crypto_data.db"
+#CRYPTO_DB_PATH = r"D:\AI_Projects\Trading\crypto_data.db"
+CRYPTO_DB_PATH = str(Path(__file__).parent.parent / "data" / "crypto_data.db")
+
 MARKS_DB_PATH = Path(__file__).parent.parent / "data" / "marks.db"
 
 

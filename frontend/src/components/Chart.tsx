@@ -13,8 +13,9 @@ import {
 
 // Price line handle returned by series.createPriceLine()
 type PriceLineHandle = ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>;
-import type { Candle, DetectedRange, LabelType, Mark, SwingPoint } from '../types';
+import type { Candle, DetectedRange, LabelType, Mark, MAConfig, SwingPoint, TDConfig } from '../types';
 import { LABEL_META } from '../types';
+import { formatTimeTW } from '../utils/time';
 
 interface MarkerConfig {
   position: 'aboveBar' | 'belowBar';
@@ -31,6 +32,52 @@ const MARK_MARKER: Record<LabelType, MarkerConfig> = {
   valid_swing_low:  { position: 'belowBar', shape: 'square',    color: '#26a69a', text: 'L' },
 };
 
+function computeSMA(candles: Candle[], length: number): { time: UTCTimestamp; value: number }[] {
+  if (length <= 0 || candles.length < length) return [];
+  const out: { time: UTCTimestamp; value: number }[] = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].c;
+    if (i >= length) sum -= candles[i - length].c;
+    if (i >= length - 1) {
+      out.push({ time: (candles[i].t / 1000) as UTCTimestamp, value: sum / length });
+    }
+  }
+  return out;
+}
+
+function computeEMA(candles: Candle[], length: number): { time: UTCTimestamp; value: number }[] {
+  if (length <= 0 || candles.length < length) return [];
+  const out: { time: UTCTimestamp; value: number }[] = [];
+  const k = 2 / (length + 1);
+  let sum = 0;
+  for (let i = 0; i < length; i++) sum += candles[i].c;
+  let ema = sum / length;
+  out.push({ time: (candles[length - 1].t / 1000) as UTCTimestamp, value: ema });
+  for (let i = length; i < candles.length; i++) {
+    ema = (candles[i].c - ema) * k + ema;
+    out.push({ time: (candles[i].t / 1000) as UTCTimestamp, value: ema });
+  }
+  return out;
+}
+
+function computeTDSetup(candles: Candle[], lookback: number, setupLength: number) {
+  const n = candles.length;
+  const buy = new Array<number>(n).fill(0);
+  const sell = new Array<number>(n).fill(0);
+  for (let i = lookback; i < n; i++) {
+    const prev = candles[i - lookback].c;
+    const cur = candles[i].c;
+    if (cur < prev) buy[i] = (buy[i - 1] || 0) + 1;
+    if (cur > prev) sell[i] = (sell[i - 1] || 0) + 1;
+    // cap display range: past setupLength keep incrementing only if same direction continues,
+    // but only numbers 1..setupLength are rendered (we wrap back to 1 after completion)
+    if (buy[i] > setupLength) buy[i] = ((buy[i] - 1) % setupLength) + 1;
+    if (sell[i] > setupLength) sell[i] = ((sell[i] - 1) % setupLength) + 1;
+  }
+  return { buy, sell };
+}
+
 interface ChartProps {
   candles: Candle[];
   marks: Mark[];
@@ -38,16 +85,20 @@ interface ChartProps {
   showSwings: boolean;
   ranges: DetectedRange[];
   showRanges: boolean;
+  maConfigs: MAConfig[];
+  showMA: boolean;
+  maType: 'sma' | 'ema';
+  tdConfig: TDConfig;
   selectedCandleTs: number | null;
   rangeStartTs: number | null;
   rangeEndTs: number | null;
   onCandleClick: (candle: Candle, isShift: boolean) => void;
   onNeedMoreData: (beforeTs: number) => void;
-  onVisibleRangeChange?: (fromMs: number, toMs: number) => void;
+  onVisibleLogicalRangeChange?: (from: number, to: number) => void;
   jumpToTs: number | null;
 }
 
-export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, selectedCandleTs, rangeStartTs, rangeEndTs, onCandleClick, onNeedMoreData, onVisibleRangeChange, jumpToTs }: ChartProps) {
+export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, maConfigs, showMA, maType, tdConfig, selectedCandleTs, rangeStartTs, rangeEndTs, onCandleClick, onNeedMoreData, onVisibleLogicalRangeChange, jumpToTs }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
   const seriesRef    = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -58,14 +109,15 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
   const isLoadingMore = useRef(false);
   const candlesRef   = useRef<Candle[]>([]);
   const rangeBandsRef = useRef<ISeriesApi<'Line'>[]>([]);
+  const maSeriesRef   = useRef<ISeriesApi<'Line'>[]>([]);
 
   // Keep latest callbacks accessible inside stable chart event handlers
-  const onClickRef      = useRef(onCandleClick);
-  const onMoreRef       = useRef(onNeedMoreData);
-  const onRangeChangeRef = useRef(onVisibleRangeChange);
-  useLayoutEffect(() => { onClickRef.current      = onCandleClick; });
-  useLayoutEffect(() => { onMoreRef.current        = onNeedMoreData; });
-  useLayoutEffect(() => { onRangeChangeRef.current = onVisibleRangeChange; });
+  const onClickRef       = useRef(onCandleClick);
+  const onMoreRef        = useRef(onNeedMoreData);
+  const onLogicalRangeRef = useRef(onVisibleLogicalRangeChange);
+  useLayoutEffect(() => { onClickRef.current        = onCandleClick; });
+  useLayoutEffect(() => { onMoreRef.current         = onNeedMoreData; });
+  useLayoutEffect(() => { onLogicalRangeRef.current = onVisibleLogicalRangeChange; });
 
   // Track shift key
   useEffect(() => {
@@ -97,6 +149,10 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
         borderColor: 'rgba(197,203,206,0.4)',
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: number) => formatTimeTW(time),
+      },
+      localization: {
+        timeFormatter: (time: number) => formatTimeTW(time),
       },
     });
 
@@ -120,22 +176,14 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
       if (candle) onClickRef.current(candle, isShiftRef.current);
     });
 
-    // Scroll left → load more historical data
+    // Scroll left → load more historical data; also drive SubChart sync via logical range
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range) return;
       if (range.from <= 30 && !isLoadingMore.current && candlesRef.current.length > 0) {
         isLoadingMore.current = true;
         onMoreRef.current(candlesRef.current[0].t);
       }
-    });
-
-    // Visible time range → drive SubChart sync
-    chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
-      if (!range) return;
-      onRangeChangeRef.current?.(
-        (range.from as number) * 1000,
-        (range.to   as number) * 1000,
-      );
+      onLogicalRangeRef.current?.(range.from, range.to);
     });
 
     // Resize observer
@@ -263,10 +311,67 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
       });
     }
 
+    // ── 5. TD Sequential Setup numbers ──
+    if (tdConfig.show && candles.length > tdConfig.lookback) {
+      const { buy, sell } = computeTDSetup(candles, tdConfig.lookback, tdConfig.setupLength);
+      for (let i = 0; i < candles.length; i++) {
+        const timeS = (candles[i].t / 1000) as UTCTimestamp;
+        if (buy[i] >= 1) {
+          const isComplete = buy[i] === tdConfig.setupLength;
+          markers.push({
+            time: timeS,
+            position: 'belowBar',
+            shape: 'circle',
+            color: isComplete ? '#26a69a' : 'rgba(38,166,154,0.55)',
+            text: String(buy[i]),
+            size: isComplete ? 1 : 0,
+            id: `td-buy-${i}`,
+          });
+        }
+        if (sell[i] >= 1) {
+          const isComplete = sell[i] === tdConfig.setupLength;
+          markers.push({
+            time: timeS,
+            position: 'aboveBar',
+            shape: 'circle',
+            color: isComplete ? '#ef5350' : 'rgba(239,83,80,0.55)',
+            text: String(sell[i]),
+            size: isComplete ? 1 : 0,
+            id: `td-sell-${i}`,
+          });
+        }
+      }
+    }
+
     // lightweight-charts requires markers sorted by time
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     seriesRef.current.setMarkers(markers);
-  }, [marks, swings, showSwings]);
+  }, [marks, swings, showSwings, candles, tdConfig]);
+
+  // ── Moving averages ──
+  useEffect(() => {
+    if (!chartRef.current) return;
+    maSeriesRef.current.forEach(s => {
+      try { chartRef.current?.removeSeries(s); } catch { /* ignore */ }
+    });
+    maSeriesRef.current = [];
+    if (!showMA || candles.length === 0) return;
+
+    const label = maType.toUpperCase();
+    maConfigs.forEach(cfg => {
+      const s = chartRef.current!.addLineSeries({
+        color: cfg.color,
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: `${label}${cfg.length}`,
+      });
+      const data = maType === 'ema' ? computeEMA(candles, cfg.length) : computeSMA(candles, cfg.length);
+      s.setData(data);
+      maSeriesRef.current.push(s);
+    });
+  }, [candles, maConfigs, showMA, maType]);
 
   // ── Selected candle highlight line ──
   useEffect(() => {
@@ -331,8 +436,8 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
 
     for (const r of visible) {
       const color = r.is_active
-        ? 'rgba(255,193,7,0.7)'   // yellow for active range
-        : 'rgba(41,98,255,0.45)'; // blue for completed range
+        ? 'rgba(255,213,79,0.95)'  // brighter amber for active range
+        : 'rgba(138,180,248,0.9)'; // cornflower blue, more visible on dark bg
       const fromS = (r.start_ts / 1000) as UTCTimestamp;
       const toS   = (r.end_ts   / 1000) as UTCTimestamp;
 
@@ -379,5 +484,5 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
     });
   }, [jumpToTs]);
 
-  return <div ref={containerRef} style={{ flex: 1, minWidth: 0 }} />;
+  return <div ref={containerRef} style={{ flex: 1, minWidth: 0, minHeight: 0 }} />;
 }

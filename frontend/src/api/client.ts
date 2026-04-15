@@ -99,8 +99,18 @@ export const api = {
     interval: string,
     pivotN: number = 5,
     limit: number = 500,
-  ): Promise<SwingPoint[]> =>
-    _get(`${BASE}/swings?symbol=${symbol}&interval=${interval}&pivot_n=${pivotN}&limit=${limit}`),
+    thresholds?: { approach?: number; rejection?: number; departureAtr?: number },
+  ): Promise<SwingPoint[]> => {
+    const p = new URLSearchParams({
+      symbol, interval,
+      pivot_n: String(pivotN),
+      limit: String(limit),
+    });
+    if (thresholds?.approach     != null) p.set('approach',      String(thresholds.approach));
+    if (thresholds?.rejection    != null) p.set('rejection',     String(thresholds.rejection));
+    if (thresholds?.departureAtr != null) p.set('departure_atr', String(thresholds.departureAtr));
+    return _get(`${BASE}/swings?${p}`);
+  },
 
   getIndicatorSeries: (
     symbol: string,

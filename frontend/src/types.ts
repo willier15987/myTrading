@@ -105,6 +105,27 @@ export interface DetectedRange {
   is_active: boolean;
 }
 
+export interface MAConfig {
+  length: number;
+  color: string;
+}
+
+export interface TDConfig {
+  show: boolean;
+  lookback: number;
+  setupLength: number;
+}
+
+export interface SwingThresholds {
+  approach: number;
+  rejection: number;
+  departureAtr: number;
+}
+
+export const MA_COLOR_PALETTE = [
+  '#2962FF', '#FF9800', '#E91E63', '#00BCD4', '#8BC34A', '#FFEB3B', '#9C27B0', '#F44336',
+];
+
 export const LABEL_META: Record<LabelType, { label: string; color: string; shortcut: string }> = {
   bull_dominance:  { label: '多方主導', color: '#26a69a', shortcut: '1' },
   bear_dominance:  { label: '空方主導', color: '#ef5350', shortcut: '2' },

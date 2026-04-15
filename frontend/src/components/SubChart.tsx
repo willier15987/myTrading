@@ -9,14 +9,15 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { IndicatorPoint } from '../types';
+import { formatTimeTW } from '../utils/time';
 
 interface SubChartProps {
   series: IndicatorPoint[];
-  // App passes a mutable ref; SubChart writes its setVisibleRange fn into it
-  setRangeRef: React.MutableRefObject<((fromMs: number, toMs: number) => void) | null>;
+  // App passes a mutable ref; SubChart writes its setVisibleLogicalRange fn into it
+  setLogicalRangeRef: React.MutableRefObject<((from: number, to: number) => void) | null>;
 }
 
-export function SubChart({ series, setRangeRef }: SubChartProps) {
+export function SubChart({ series, setLogicalRangeRef }: SubChartProps) {
   const containerRef   = useRef<HTMLDivElement>(null);
   const chartRef       = useRef<IChartApi | null>(null);
   const forceRef       = useRef<ISeriesApi<'Histogram'> | null>(null);
@@ -46,6 +47,10 @@ export function SubChart({ series, setRangeRef }: SubChartProps) {
         borderColor: 'rgba(197,203,206,0.4)',
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: number) => formatTimeTW(time),
+      },
+      localization: {
+        timeFormatter: (time: number) => formatTimeTW(time),
       },
       // Sub-chart is read-only; disable user scroll/scale so it only moves
       // when the main chart drives the sync
@@ -80,14 +85,13 @@ export function SubChart({ series, setRangeRef }: SubChartProps) {
     forceRef.current  = forceSeries;
     deRef.current     = deSeries;
 
-    // Expose setVisibleRange so App can drive sync from the main chart
-    setRangeRef.current = (fromMs: number, toMs: number) => {
+    // Expose setVisibleLogicalRange so App can drive sync from the main chart.
+    // Logical range works past the data edges (unlike setVisibleRange), so the
+    // sub-chart stays aligned even when the main chart scrolls into empty space.
+    setLogicalRangeRef.current = (from: number, to: number) => {
       if (!chartRef.current) return;
       try {
-        chartRef.current.timeScale().setVisibleRange({
-          from: (fromMs / 1000) as UTCTimestamp,
-          to:   (toMs   / 1000) as UTCTimestamp,
-        });
+        chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
       } catch { /* range can be invalid during fast scroll */ }
     };
 
@@ -105,7 +109,7 @@ export function SubChart({ series, setRangeRef }: SubChartProps) {
 
     return () => {
       ro.disconnect();
-      setRangeRef.current = null;
+      setLogicalRangeRef.current = null;
       chart.remove();
       chartRef.current = null;
       forceRef.current = null;
@@ -113,15 +117,12 @@ export function SubChart({ series, setRangeRef }: SubChartProps) {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep setRangeRef wired even if the ref object changes identity (shouldn't, but safe)
+  // Keep setter wired even if the ref object changes identity (shouldn't, but safe)
   useLayoutEffect(() => {
     if (!chartRef.current) return;
-    setRangeRef.current = (fromMs: number, toMs: number) => {
+    setLogicalRangeRef.current = (from: number, to: number) => {
       try {
-        chartRef.current?.timeScale().setVisibleRange({
-          from: (fromMs / 1000) as UTCTimestamp,
-          to:   (toMs   / 1000) as UTCTimestamp,
-        });
+        chartRef.current?.timeScale().setVisibleLogicalRange({ from, to });
       } catch { /* ignore */ }
     };
   });
