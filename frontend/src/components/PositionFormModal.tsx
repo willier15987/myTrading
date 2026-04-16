@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { PositionDirection, Position } from '../types';
 import { pnlFraction, riskReward } from '../utils/positions';
-import { formatTimeTW } from '../utils/time';
+import { type AppTimeZone, formatChartTime, parseDateTimeInput, toDateTimeInputValue } from '../utils/time';
 
 interface EntryDraft {
   direction: PositionDirection;
@@ -22,6 +22,7 @@ type Props =
   | {
       mode: 'entry';
       draft: EntryDraft;
+      timezone: AppTimeZone;
       onSubmit: (d: EntryDraft) => void;
       onCancel: () => void;
     }
@@ -29,6 +30,7 @@ type Props =
       mode: 'exit';
       position: Position;
       draft: ExitDraft;
+      timezone: AppTimeZone;
       onSubmit: (d: ExitDraft) => void;
       onCancel: () => void;
     };
@@ -87,7 +89,7 @@ export function PositionFormModal(props: Props) {
   );
 }
 
-function EntryForm({ draft, onSubmit, onCancel }: Extract<Props, { mode: 'entry' }>) {
+function EntryForm({ draft, timezone, onSubmit, onCancel }: Extract<Props, { mode: 'entry' }>) {
   const [d, setD] = useState<EntryDraft>(draft);
   const color = d.direction === 'long' ? '#26a69a' : '#ef5350';
   const rr = riskReward(d.direction, d.entry_price, d.tp_price, d.sl_price);
@@ -106,7 +108,7 @@ function EntryForm({ draft, onSubmit, onCancel }: Extract<Props, { mode: 'entry'
       <div style={{ ...S.title, color }}>
         開 {d.direction === 'long' ? '多頭' : '空頭'} 倉位
       </div>
-      <div style={S.info}>進場時間：{formatTimeTW(d.entry_ts / 1000)}</div>
+      <div style={S.info}>進場時間：{formatChartTime(d.entry_ts / 1000, timezone)}</div>
 
       <div style={S.row}>
         <span style={S.label}>進場價</span>
@@ -155,13 +157,14 @@ function EntryForm({ draft, onSubmit, onCancel }: Extract<Props, { mode: 'entry'
   );
 }
 
-function ExitForm({ position, draft, onSubmit, onCancel }: Extract<Props, { mode: 'exit' }>) {
+function ExitForm({ position, draft, timezone, onSubmit, onCancel }: Extract<Props, { mode: 'exit' }>) {
   const [d, setD] = useState<ExitDraft>(draft);
   const dirColor = position.direction === 'long' ? '#26a69a' : '#ef5350';
   const pnl = pnlFraction(position.direction, position.entry_price, d.exit_price);
   const pnlColor = pnl >= 0 ? '#26a69a' : '#ef5350';
+  const timeValid = Number.isFinite(d.exit_ts) && d.exit_ts >= position.entry_ts;
 
-  const valid = Number.isFinite(d.exit_price) && d.exit_price > 0;
+  const valid = timeValid && Number.isFinite(d.exit_price) && d.exit_price > 0;
 
   return (
     <>
@@ -169,14 +172,22 @@ function ExitForm({ position, draft, onSubmit, onCancel }: Extract<Props, { mode
         平倉 — {position.direction === 'long' ? '多頭' : '空頭'}
       </div>
       <div style={S.info}>
-        進場：{formatTimeTW(position.entry_ts / 1000)} @ {position.entry_price}
+        進場：{formatChartTime(position.entry_ts / 1000, timezone)} @ {position.entry_price}
         <br />
         TP {position.tp_price} · SL {position.sl_price}
       </div>
 
       <div style={S.row}>
         <span style={S.label}>出場時間</span>
-        <span style={S.readonly}>{formatTimeTW(d.exit_ts / 1000)}</span>
+        <input
+          type="datetime-local"
+          style={S.input}
+          value={toDateTimeInputValue(d.exit_ts, timezone)}
+          onChange={e => {
+            const ts = parseDateTimeInput(e.target.value, timezone);
+            if (ts != null) setD({ ...d, exit_ts: ts });
+          }}
+        />
       </div>
       <div style={S.row}>
         <span style={S.label}>出場價</span>
@@ -184,6 +195,12 @@ function ExitForm({ position, draft, onSubmit, onCancel }: Extract<Props, { mode
           value={d.exit_price}
           onChange={e => setD({ ...d, exit_price: parseFloat(e.target.value) })} />
       </div>
+
+      {!timeValid && (
+        <div style={{ ...S.info, borderColor: '#ef5350', color: '#ef5350' }}>
+          出場時間不能早於進場時間。
+        </div>
+      )}
 
       <div style={S.info}>
         PnL：<span style={{ color: pnlColor, fontWeight: 600 }}>

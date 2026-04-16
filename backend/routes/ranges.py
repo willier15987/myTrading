@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from typing import Optional
 
 from ..db import get_crypto_db
 from ..core.displacement import displacement_efficiency
@@ -13,6 +14,7 @@ def get_ranges(
     min_bars: int = Query(10, ge=5, le=100),
     eff_threshold: float = Query(0.3, ge=0.05, le=0.6),
     lookback: int = Query(20, ge=10, le=60),
+    end: Optional[int] = Query(None),
 ):
     """
     Detect consolidation / trading ranges using rolling displacement efficiency.
@@ -22,16 +24,28 @@ def get_ranges(
     """
     conn = get_crypto_db()
     try:
-        rows = conn.execute(
-            """
-            SELECT timestamp, open, high, low, close, volume
-            FROM klines
-            WHERE symbol = ? AND interval = ?
-            ORDER BY timestamp DESC
-            LIMIT 800
-            """,
-            (symbol, interval),
-        ).fetchall()
+        if end is not None:
+            rows = conn.execute(
+                """
+                SELECT timestamp, open, high, low, close, volume
+                FROM klines
+                WHERE symbol = ? AND interval = ? AND timestamp <= ?
+                ORDER BY timestamp DESC
+                LIMIT 800
+                """,
+                (symbol, interval, end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT timestamp, open, high, low, close, volume
+                FROM klines
+                WHERE symbol = ? AND interval = ?
+                ORDER BY timestamp DESC
+                LIMIT 800
+                """,
+                (symbol, interval),
+            ).fetchall()
         candles = [dict(r) for r in reversed(rows)]
     finally:
         conn.close()

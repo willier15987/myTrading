@@ -1,7 +1,7 @@
 import React from 'react';
 import type { Position } from '../types';
 import { isOpen, pnlFraction, riskReward, positionsToCSV, downloadCSV } from '../utils/positions';
-import { formatTimeTW } from '../utils/time';
+import { type AppTimeZone, formatChartTime } from '../utils/time';
 import { useLocalStorage } from '../utils/useLocalStorage';
 
 const C = {
@@ -54,13 +54,14 @@ const S: Record<string, React.CSSProperties> = {
 interface Props {
   symbol: string;
   interval: string;
+  timezone: AppTimeZone;
   positions: Position[];
   currentPrice: number | null;
   onRequestClose: (position: Position) => void;
   onDelete: (id: string) => void;
 }
 
-export function PositionPanel({ symbol, interval, positions, currentPrice, onRequestClose, onDelete }: Props) {
+export function PositionPanel({ symbol, interval, timezone, positions, currentPrice, onRequestClose, onDelete }: Props) {
   const [collapsed, setCollapsed] = useLocalStorage<boolean>('positionPanelCollapsed', false);
   const visible = positions
     .filter(p => p.symbol === symbol && p.interval === interval)
@@ -80,7 +81,7 @@ export function PositionPanel({ symbol, interval, positions, currentPrice, onReq
 
   const handleExport = () => {
     if (positions.length === 0) return;
-    const csv = positionsToCSV(positions);
+    const csv = positionsToCSV(positions, timezone);
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     downloadCSV(`positions-${stamp}.csv`, csv);
   };
@@ -124,7 +125,7 @@ export function PositionPanel({ symbol, interval, positions, currentPrice, onReq
                   </span>
                 </div>
 
-                <div style={S.kv}><span>進場</span><span style={S.kvVal}>{formatTimeTW(p.entry_ts / 1000)}</span></div>
+                <div style={S.kv}><span>進場</span><span style={S.kvVal}>{formatChartTime(p.entry_ts / 1000, timezone)}</span></div>
                 <div style={S.kv}><span>進場價</span><span style={S.kvVal}>{p.entry_price}</span></div>
                 <div style={S.kv}><span>TP / SL</span><span style={S.kvVal}>{p.tp_price} / {p.sl_price}</span></div>
                 {rr != null && (
@@ -132,7 +133,7 @@ export function PositionPanel({ symbol, interval, positions, currentPrice, onReq
                 )}
                 {!open && (
                   <>
-                    <div style={S.kv}><span>出場</span><span style={S.kvVal}>{p.exit_ts != null ? formatTimeTW(p.exit_ts / 1000) : '-'}</span></div>
+                    <div style={S.kv}><span>出場</span><span style={S.kvVal}>{p.exit_ts != null ? formatChartTime(p.exit_ts / 1000, timezone) : '-'}</span></div>
                     <div style={S.kv}><span>出場價</span><span style={S.kvVal}>{p.exit_price}</span></div>
                   </>
                 )}

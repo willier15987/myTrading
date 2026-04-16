@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from typing import Optional
 
 from ..db import get_crypto_db
 from ..core.atr import atr as calc_atr
@@ -14,6 +15,7 @@ def get_indicator_series(
     interval: str,
     lookback: int = Query(20, ge=5, le=100),
     limit: int = Query(500, ge=50, le=2000),
+    end: Optional[int] = Query(None),
 ):
     """
     For each candle in the most recent `limit` candles, compute a rolling
@@ -24,16 +26,28 @@ def get_indicator_series(
 
     conn = get_crypto_db()
     try:
-        rows = conn.execute(
-            """
-            SELECT timestamp, open, high, low, close, volume
-            FROM klines
-            WHERE symbol = ? AND interval = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """,
-            (symbol, interval, fetch_n),
-        ).fetchall()
+        if end is not None:
+            rows = conn.execute(
+                """
+                SELECT timestamp, open, high, low, close, volume
+                FROM klines
+                WHERE symbol = ? AND interval = ? AND timestamp <= ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (symbol, interval, end, fetch_n),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT timestamp, open, high, low, close, volume
+                FROM klines
+                WHERE symbol = ? AND interval = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (symbol, interval, fetch_n),
+            ).fetchall()
         all_candles = [dict(r) for r in reversed(rows)]
     finally:
         conn.close()

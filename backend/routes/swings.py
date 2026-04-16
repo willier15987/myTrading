@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from typing import Optional
 
 from ..db import get_crypto_db
 from ..core.atr import atr as calc_atr
@@ -13,6 +14,7 @@ def get_swings(
     interval: str,
     pivot_n: int = Query(5, ge=2, le=20),
     limit: int = Query(500, ge=100, le=2000),
+    end: Optional[int] = Query(None),
     approach: float = Query(0.5,  ge=0.0, le=1.0, description="推進段 force_ratio 門檻"),
     rejection: float = Query(0.55, ge=0.0, le=1.0, description="反轉段 force_ratio 門檻（對稱）"),
     departure_atr: float = Query(0.5, ge=0.0, le=5.0, description="離場 ATR 倍數門檻"),
@@ -27,16 +29,28 @@ def get_swings(
 
     conn = get_crypto_db()
     try:
-        rows = conn.execute(
-            """
-            SELECT timestamp, open, high, low, close, volume
-            FROM klines
-            WHERE symbol = ? AND interval = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """,
-            (symbol, interval, fetch_n),
-        ).fetchall()
+        if end is not None:
+            rows = conn.execute(
+                """
+                SELECT timestamp, open, high, low, close, volume
+                FROM klines
+                WHERE symbol = ? AND interval = ? AND timestamp <= ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (symbol, interval, end, fetch_n),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT timestamp, open, high, low, close, volume
+                FROM klines
+                WHERE symbol = ? AND interval = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (symbol, interval, fetch_n),
+            ).fetchall()
         candles = [dict(r) for r in reversed(rows)]
     finally:
         conn.close()

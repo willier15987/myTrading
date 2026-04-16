@@ -1,5 +1,5 @@
 import type { Position, PositionDirection } from '../types';
-import { formatTimeTW } from './time';
+import { type AppTimeZone, formatChartTime } from './time';
 
 // PnL as a fraction (0.05 = +5%). Positive = profit for the position's direction.
 export function pnlFraction(direction: PositionDirection, entry: number, current: number): number {
@@ -32,7 +32,7 @@ function escapeCell(v: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export function positionsToCSV(positions: Position[]): string {
+export function positionsToCSV(positions: Position[], timezone: AppTimeZone = 'Asia/Taipei'): string {
   const rows = positions.map(p => {
     const pnl = p.exit_price != null
       ? pnlFraction(p.direction, p.entry_price, p.exit_price)
@@ -43,11 +43,11 @@ export function positionsToCSV(positions: Position[]): string {
       p.symbol,
       p.interval,
       p.direction,
-      formatTimeTW(p.entry_ts / 1000),
+      formatChartTime(p.entry_ts / 1000, timezone),
       p.entry_price,
       p.tp_price,
       p.sl_price,
-      p.exit_ts != null ? formatTimeTW(p.exit_ts / 1000) : '',
+      p.exit_ts != null ? formatChartTime(p.exit_ts / 1000, timezone) : '',
       p.exit_price ?? '',
       pnl != null ? (pnl * 100).toFixed(2) : '',
       rr != null ? rr.toFixed(2) : '',

@@ -1,17 +1,34 @@
-import React, { useState, useRef, useEffect } from 'react';
-import type { SwingThresholds, SymbolInfo } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import type { ReplaySpeed, ReplayState } from '../replay/types';
+import type { PositionDirection, SwingThresholds, SymbolInfo } from '../types';
+import { type AppTimeZone, getTimeZoneLabel, parseDateTimeInput } from '../utils/time';
 
 const INTERVALS = ['15m', '1h', '4h', '1d'] as const;
 const PIVOT_N_OPTIONS = [3, 5, 8, 10] as const;
+const REPLAY_SPEED_OPTIONS: ReplaySpeed[] = [1, 2, 4, 8];
+const TIMEZONE_OPTIONS: AppTimeZone[] = ['local', 'UTC', 'Asia/Taipei'];
 
-const ivBtnStyle = (active: boolean): React.CSSProperties => ({
+const ivBtnStyle = (active: boolean, disabled = false): React.CSSProperties => ({
   padding: '3px 10px',
   borderRadius: 4,
   border: 'none',
-  cursor: 'pointer',
+  cursor: disabled ? 'not-allowed' : 'pointer',
   fontSize: 13,
   background: active ? '#2962FF' : '#2a2e39',
   color: active ? '#fff' : '#d1d4dc',
+  opacity: disabled ? 0.45 : 1,
+});
+
+const actionBtnStyle = (background: string, active = false): React.CSSProperties => ({
+  padding: '3px 12px',
+  borderRadius: 4,
+  border: active ? '2px solid #ffffff' : 'none',
+  cursor: 'pointer',
+  fontSize: 13,
+  background,
+  color: '#fff',
+  fontWeight: 600,
+  flexShrink: 0,
 });
 
 const S: Record<string, React.CSSProperties> = {
@@ -19,13 +36,16 @@ const S: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
+    rowGap: 6,
     padding: '6px 12px',
     background: '#1e222d',
     borderBottom: '1px solid #2a2e39',
     flexShrink: 0,
-    height: 44,
-    flexWrap: 'nowrap',
-    overflowX: 'auto',
+    minHeight: 44,
+    flexWrap: 'wrap',
+    whiteSpace: 'nowrap',
+    position: 'relative',
+    zIndex: 10,
   },
   symbolWrap: { position: 'relative', width: 160, flexShrink: 0 },
   symbolInput: {
@@ -83,6 +103,21 @@ const S: Record<string, React.CSSProperties> = {
     outline: 'none',
     cursor: 'pointer',
   },
+  replayBox: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '4px 8px',
+    borderRadius: 6,
+    background: '#151821',
+    border: '1px solid #2a2e39',
+  },
+  replayStatus: {
+    color: '#d1d4dc',
+    fontSize: 12,
+    minWidth: 92,
+    textAlign: 'center',
+  },
 };
 
 interface ToolbarProps {
@@ -100,58 +135,129 @@ interface ToolbarProps {
   tdShow: boolean;
   tdLookback: number;
   tdSetupLength: number;
-  onSymbolChange: (s: string) => void;
-  onIntervalChange: (i: string) => void;
+  onSymbolChange: (symbol: string) => void;
+  onIntervalChange: (interval: string) => void;
   onDateJump: (ts: number) => void;
   onToggleSwings: () => void;
-  onPivotNChange: (n: number) => void;
-  onSwingThresholdsChange: (t: SwingThresholds) => void;
+  onPivotNChange: (value: number) => void;
+  onSwingThresholdsChange: (thresholds: SwingThresholds) => void;
   onToggleForce: () => void;
   onToggleRanges: () => void;
   onToggleMA: () => void;
-  onMALengthsChange: (lens: number[]) => void;
-  onMATypeChange: (t: 'sma' | 'ema') => void;
+  onMALengthsChange: (lengths: number[]) => void;
+  onMATypeChange: (type: 'sma' | 'ema') => void;
   onToggleTD: () => void;
-  onTDLookbackChange: (n: number) => void;
-  onTDSetupLengthChange: (n: number) => void;
+  onTDLookbackChange: (value: number) => void;
+  onTDSetupLengthChange: (value: number) => void;
   showLastPrice: boolean;
   onToggleLastPrice: () => void;
   autoRefresh: boolean;
+  autoRefreshLocked: boolean;
   onToggleAutoRefresh: () => void;
+  timezone: AppTimeZone;
+  onTimezoneChange: (timezone: AppTimeZone) => void;
   onOpenLong: () => void;
   onOpenShort: () => void;
+  placingDirection: PositionDirection | null;
+  onCancelPlacing: () => void;
+  replayEnabled: boolean;
+  replayStatus: ReplayState['status'];
+  replaySpeed: ReplaySpeed;
+  replayAnchorInput: string;
+  replayAnchorInvalid: boolean;
+  replayLoadingFuture: boolean;
+  replayCursorIndex: number;
+  replayLoadedBars: number;
+  onReplayAnchorInputChange: (value: string) => void;
+  onStartReplay: () => void;
+  onStopReplay: () => void;
+  onReplayPlayPause: () => void;
+  onReplayStepBack: () => void;
+  onReplayStepForward: () => void;
+  onReplaySpeedChange: (speed: ReplaySpeed) => void;
+  onReplayScrub: (index: number) => void;
 }
 
+const replayStatusLabel: Record<ReplayState['status'], string> = {
+  idle: '未啟動',
+  paused: '已暫停',
+  playing: '播放中',
+  ended: '已到尾端',
+};
+
 export function Toolbar({
-  symbol, interval, symbols,
-  showSwings, pivotN, swingThresholds, showForce, showRanges,
-  showMA, maLengths, maType, tdShow, tdLookback, tdSetupLength,
-  onSymbolChange, onIntervalChange, onDateJump,
-  onToggleSwings, onPivotNChange, onSwingThresholdsChange, onToggleForce, onToggleRanges,
-  onToggleMA, onMALengthsChange, onMATypeChange, onToggleTD, onTDLookbackChange, onTDSetupLengthChange,
-  showLastPrice, onToggleLastPrice, autoRefresh, onToggleAutoRefresh, onOpenLong, onOpenShort,
+  symbol,
+  interval,
+  symbols,
+  showSwings,
+  pivotN,
+  swingThresholds,
+  showForce,
+  showRanges,
+  showMA,
+  maLengths,
+  maType,
+  tdShow,
+  tdLookback,
+  tdSetupLength,
+  onSymbolChange,
+  onIntervalChange,
+  onDateJump,
+  onToggleSwings,
+  onPivotNChange,
+  onSwingThresholdsChange,
+  onToggleForce,
+  onToggleRanges,
+  onToggleMA,
+  onMALengthsChange,
+  onMATypeChange,
+  onToggleTD,
+  onTDLookbackChange,
+  onTDSetupLengthChange,
+  showLastPrice,
+  onToggleLastPrice,
+  autoRefresh,
+  autoRefreshLocked,
+  onToggleAutoRefresh,
+  timezone,
+  onTimezoneChange,
+  onOpenLong,
+  onOpenShort,
+  placingDirection,
+  onCancelPlacing,
+  replayEnabled,
+  replayStatus,
+  replaySpeed,
+  replayAnchorInput,
+  replayAnchorInvalid,
+  replayLoadingFuture,
+  replayCursorIndex,
+  replayLoadedBars,
+  onReplayAnchorInputChange,
+  onStartReplay,
+  onStopReplay,
+  onReplayPlayPause,
+  onReplayStepBack,
+  onReplayStepForward,
+  onReplaySpeedChange,
+  onReplayScrub,
 }: ToolbarProps) {
   const [query, setQuery] = useState(symbol);
   const [open, setOpen] = useState(false);
   const [maText, setMaText] = useState(maLengths.join(','));
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setMaText(maLengths.join(',')); }, [maLengths]);
-
-  const commitMaText = () => {
-    const parsed = maText
-      .split(/[,\s]+/)
-      .map(s => parseInt(s, 10))
-      .filter(n => Number.isFinite(n) && n > 0 && n <= 1000);
-    if (parsed.length > 0) onMALengthsChange(parsed);
-    else setMaText(maLengths.join(','));
-  };
-
-  useEffect(() => { setQuery(symbol); }, [symbol]);
+  useEffect(() => {
+    setMaText(maLengths.join(','));
+  }, [maLengths]);
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+    setQuery(symbol);
+  }, [symbol]);
+
+  useEffect(() => {
+    const handler = (event: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
         setOpen(false);
         setQuery(symbol);
       }
@@ -160,114 +266,130 @@ export function Toolbar({
     return () => document.removeEventListener('mousedown', handler);
   }, [symbol]);
 
+  const commitMaText = () => {
+    const parsed = maText
+      .split(/[,\s]+/)
+      .map(value => parseInt(value, 10))
+      .filter(value => Number.isFinite(value) && value > 0 && value <= 1000);
+    if (parsed.length > 0) onMALengthsChange(parsed);
+    else setMaText(maLengths.join(','));
+  };
+
   const filtered = query
-    ? symbols.filter(s => s.symbol.toUpperCase().includes(query.toUpperCase()))
+    ? symbols.filter(info => info.symbol.toUpperCase().includes(query.toUpperCase()))
     : symbols;
 
-  const handleSelect = (sym: string) => {
-    onSymbolChange(sym);
-    setQuery(sym);
+  const handleSelect = (nextSymbol: string) => {
+    onSymbolChange(nextSymbol);
+    setQuery(nextSymbol);
     setOpen(false);
   };
 
-  const handleDateJump = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.value) return;
-    const ts = new Date(e.target.value).getTime();
-    if (!isNaN(ts)) onDateJump(ts);
+  const handleDateJump = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.value) return;
+    const ts = parseDateTimeInput(event.target.value, timezone);
+    if (ts != null) onDateJump(ts);
   };
+
+  const replayProgress = replayLoadedBars > 0
+    ? `${Math.min(replayCursorIndex + 1, replayLoadedBars)}/${replayLoadedBars}`
+    : '0/0';
 
   return (
     <div style={S.bar}>
-      {/* Symbol search */}
       <div ref={wrapRef} style={S.symbolWrap}>
         <input
           style={S.symbolInput}
           value={query}
-          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onChange={event => {
+            setQuery(event.target.value);
+            setOpen(true);
+          }}
           onFocus={() => setOpen(true)}
-          placeholder="搜尋交易對…"
+          placeholder="搜尋交易對"
         />
         {open && filtered.length > 0 && (
           <div style={S.dropdown}>
-            {filtered.slice(0, 60).map(s => (
+            {filtered.slice(0, 60).map(info => (
               <div
-                key={s.symbol}
-                style={{ ...S.dropItem, background: s.symbol === symbol ? '#2a2e39' : undefined }}
-                onMouseDown={() => handleSelect(s.symbol)}
+                key={info.symbol}
+                style={{ ...S.dropItem, background: info.symbol === symbol ? '#2a2e39' : undefined }}
+                onMouseDown={() => handleSelect(info.symbol)}
               >
-                {s.symbol}
+                {info.symbol}
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Interval buttons */}
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-        {INTERVALS.map(iv => (
-          <button key={iv} style={ivBtnStyle(iv === interval)} onClick={() => onIntervalChange(iv)}>
-            {iv}
+        {INTERVALS.map(value => (
+          <button key={value} style={ivBtnStyle(value === interval)} onClick={() => onIntervalChange(value)}>
+            {value}
           </button>
         ))}
       </div>
 
-      {/* Date jump */}
       <span style={S.label}>跳轉</span>
       <input type="datetime-local" style={S.dateInput} onChange={handleDateJump} />
 
       <div style={S.divider} />
 
-      {/* Swing toggle */}
-      <button
-        style={ivBtnStyle(showSwings)}
-        onClick={onToggleSwings}
-        title="顯示/隱藏自動波段偵測"
-      >
+      <button style={ivBtnStyle(showSwings)} onClick={onToggleSwings} title="顯示或隱藏波段標記">
         波段
       </button>
-
-      {/* Pivot N + swing validity thresholds — only when swings are on */}
       {showSwings && (
         <>
-          <span style={S.label}>N=</span>
-          <select
-            style={S.select}
-            value={pivotN}
-            onChange={e => onPivotNChange(Number(e.target.value))}
-            title="左右各看幾根 K 線確認高低點"
-          >
-            {PIVOT_N_OPTIONS.map(n => (
-              <option key={n} value={n}>{n}</option>
+          <span style={S.label}>N</span>
+          <select style={S.select} value={pivotN} onChange={event => onPivotNChange(Number(event.target.value))}>
+            {PIVOT_N_OPTIONS.map(value => (
+              <option key={value} value={value}>{value}</option>
             ))}
           </select>
-          <span style={S.label} title="推進段 force_ratio 門檻（愈大愈嚴）">推</span>
+          <span style={S.label}>Approach</span>
           <input
-            type="number" step={0.05} min={0} max={1}
-            style={{ ...S.dateInput, width: 56 }}
+            type="number"
+            step={0.05}
+            min={0}
+            max={1}
+            style={{ ...S.dateInput, width: 60 }}
             value={swingThresholds.approach}
-            onChange={e => {
-              const v = parseFloat(e.target.value);
-              if (Number.isFinite(v) && v >= 0 && v <= 1) onSwingThresholdsChange({ ...swingThresholds, approach: v });
+            onChange={event => {
+              const value = parseFloat(event.target.value);
+              if (Number.isFinite(value) && value >= 0 && value <= 1) {
+                onSwingThresholdsChange({ ...swingThresholds, approach: value });
+              }
             }}
           />
-          <span style={S.label} title="反轉段 force_ratio 門檻（愈大愈嚴）">反</span>
+          <span style={S.label}>Reject</span>
           <input
-            type="number" step={0.05} min={0} max={1}
-            style={{ ...S.dateInput, width: 56 }}
+            type="number"
+            step={0.05}
+            min={0}
+            max={1}
+            style={{ ...S.dateInput, width: 60 }}
             value={swingThresholds.rejection}
-            onChange={e => {
-              const v = parseFloat(e.target.value);
-              if (Number.isFinite(v) && v >= 0 && v <= 1) onSwingThresholdsChange({ ...swingThresholds, rejection: v });
+            onChange={event => {
+              const value = parseFloat(event.target.value);
+              if (Number.isFinite(value) && value >= 0 && value <= 1) {
+                onSwingThresholdsChange({ ...swingThresholds, rejection: value });
+              }
             }}
           />
-          <span style={S.label} title="離場距離需超過 N × ATR">ATR×</span>
+          <span style={S.label}>ATR</span>
           <input
-            type="number" step={0.1} min={0} max={5}
-            style={{ ...S.dateInput, width: 56 }}
+            type="number"
+            step={0.1}
+            min={0}
+            max={5}
+            style={{ ...S.dateInput, width: 60 }}
             value={swingThresholds.departureAtr}
-            onChange={e => {
-              const v = parseFloat(e.target.value);
-              if (Number.isFinite(v) && v >= 0 && v <= 5) onSwingThresholdsChange({ ...swingThresholds, departureAtr: v });
+            onChange={event => {
+              const value = parseFloat(event.target.value);
+              if (Number.isFinite(value) && value >= 0 && value <= 5) {
+                onSwingThresholdsChange({ ...swingThresholds, departureAtr: value });
+              }
             }}
           />
         </>
@@ -275,144 +397,173 @@ export function Toolbar({
 
       <div style={S.divider} />
 
-      {/* Force sub-chart toggle */}
-      <button
-        style={ivBtnStyle(showForce)}
-        onClick={onToggleForce}
-        title="顯示/隱藏力道分析子圖（force_ratio + 位移效率）"
-      >
+      <button style={ivBtnStyle(showForce)} onClick={onToggleForce} title="顯示或隱藏力道子圖">
         力道
       </button>
-
-      {/* Range overlay toggle */}
-      <button
-        style={ivBtnStyle(showRanges)}
-        onClick={onToggleRanges}
-        title="顯示/隱藏橫盤整理偵測"
-      >
+      <button style={ivBtnStyle(showRanges)} onClick={onToggleRanges} title="顯示或隱藏橫盤區間">
         橫盤
       </button>
 
       <div style={S.divider} />
 
-      {/* MA toggle */}
-      <button
-        style={ivBtnStyle(showMA)}
-        onClick={onToggleMA}
-        title="顯示/隱藏移動平均線"
-      >
+      <button style={ivBtnStyle(showMA)} onClick={onToggleMA} title="顯示或隱藏均線">
         均線
       </button>
-
       {showMA && (
         <>
-          <select
-            style={S.select}
-            value={maType}
-            onChange={e => onMATypeChange(e.target.value as 'sma' | 'ema')}
-            title="簡單移動平均 vs 指數移動平均"
-          >
+          <select style={S.select} value={maType} onChange={event => onMATypeChange(event.target.value as 'sma' | 'ema')}>
             <option value="sma">SMA</option>
             <option value="ema">EMA</option>
           </select>
-          <span style={S.label}>長度</span>
+          <span style={S.label}>Lengths</span>
           <input
             style={{ ...S.dateInput, width: 120 }}
             value={maText}
-            onChange={e => setMaText(e.target.value)}
+            onChange={event => setMaText(event.target.value)}
             onBlur={commitMaText}
-            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+            }}
             placeholder="20,60,200"
-            title="逗號分隔；例：20,60,200"
           />
         </>
       )}
 
       <div style={S.divider} />
 
-      {/* TD toggle */}
-      <button
-        style={ivBtnStyle(tdShow)}
-        onClick={onToggleTD}
-        title="顯示/隱藏 TD Sequential Setup"
-      >
+      <button style={ivBtnStyle(tdShow)} onClick={onToggleTD} title="顯示或隱藏 TD Setup">
         TD
       </button>
-
       {tdShow && (
         <>
-          <span style={S.label}>比對</span>
+          <span style={S.label}>Lookback</span>
           <input
             type="number"
             min={1}
             max={20}
-            style={{ ...S.dateInput, width: 52 }}
+            style={{ ...S.dateInput, width: 58 }}
             value={tdLookback}
-            onChange={e => {
-              const n = parseInt(e.target.value, 10);
-              if (Number.isFinite(n) && n >= 1 && n <= 20) onTDLookbackChange(n);
+            onChange={event => {
+              const value = parseInt(event.target.value, 10);
+              if (Number.isFinite(value) && value >= 1 && value <= 20) onTDLookbackChange(value);
             }}
-            title="與前 N 根比較（標準 4）"
           />
-          <span style={S.label}>長度</span>
+          <span style={S.label}>Setup</span>
           <input
             type="number"
             min={3}
             max={30}
-            style={{ ...S.dateInput, width: 52 }}
+            style={{ ...S.dateInput, width: 58 }}
             value={tdSetupLength}
-            onChange={e => {
-              const n = parseInt(e.target.value, 10);
-              if (Number.isFinite(n) && n >= 3 && n <= 30) onTDSetupLengthChange(n);
+            onChange={event => {
+              const value = parseInt(event.target.value, 10);
+              if (Number.isFinite(value) && value >= 3 && value <= 30) onTDSetupLengthChange(value);
             }}
-            title="Setup 完成所需連續根數（標準 9）"
           />
         </>
       )}
 
       <div style={S.divider} />
 
-      {/* Last-price line toggle */}
-      <button
-        style={ivBtnStyle(showLastPrice)}
-        onClick={onToggleLastPrice}
-        title="顯示/隱藏最新價格水平線"
-      >
+      <button style={ivBtnStyle(showLastPrice)} onClick={onToggleLastPrice} title="顯示或隱藏現價線">
         現價線
       </button>
-
-      {/* Auto-refresh toggle */}
       <button
-        style={ivBtnStyle(autoRefresh)}
-        onClick={onToggleAutoRefresh}
-        title="開啟/關閉自動更新最新 K 線 (30 秒)"
+        style={ivBtnStyle(autoRefresh, autoRefreshLocked)}
+        onClick={() => {
+          if (!autoRefreshLocked) onToggleAutoRefresh();
+        }}
+        title={autoRefreshLocked ? '回放中已停用自動更新' : '每 30 秒更新最新 K 線'}
       >
         自動更新
+      </button>
+      <select
+        style={S.select}
+        value={timezone}
+        onChange={event => onTimezoneChange(event.target.value as AppTimeZone)}
+        title="切換時間顯示與輸入的時區"
+      >
+        {TIMEZONE_OPTIONS.map(value => (
+          <option key={value} value={value}>{getTimeZoneLabel(value)}</option>
+        ))}
+      </select>
+
+      <div style={S.divider} />
+
+      <button
+        style={actionBtnStyle('#26a69a', placingDirection === 'long')}
+        onClick={() => (placingDirection === 'long' ? onCancelPlacing() : onOpenLong())}
+        title="進入多單放置模式"
+      >
+        {placingDirection === 'long' ? '取消多單' : '開多'}
+      </button>
+      <button
+        style={actionBtnStyle('#ef5350', placingDirection === 'short')}
+        onClick={() => (placingDirection === 'short' ? onCancelPlacing() : onOpenShort())}
+        title="進入空單放置模式"
+      >
+        {placingDirection === 'short' ? '取消空單' : '開空'}
       </button>
 
       <div style={S.divider} />
 
-      {/* Open long / short buttons */}
-      <button
-        style={{
-          padding: '3px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
-          fontSize: 13, background: '#26a69a', color: '#fff', fontWeight: 600, flexShrink: 0,
-        }}
-        onClick={onOpenLong}
-        title="開多頭倉位 (快捷鍵 P)"
-      >
-        開多 P
-      </button>
-      <button
-        style={{
-          padding: '3px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
-          fontSize: 13, background: '#ef5350', color: '#fff', fontWeight: 600, flexShrink: 0,
-        }}
-        onClick={onOpenShort}
-        title="開空頭倉位 (快捷鍵 O)"
-      >
-        開空 O
-      </button>
+      <div style={S.replayBox}>
+        <span style={S.label}>回放</span>
+        <input
+          type="datetime-local"
+          style={{
+            ...S.dateInput,
+            borderColor: replayAnchorInvalid ? '#ef5350' : '#363a45',
+            boxShadow: replayAnchorInvalid ? '0 0 0 1px rgba(239,83,80,0.35)' : undefined,
+          }}
+          value={replayAnchorInput}
+          onChange={event => onReplayAnchorInputChange(event.target.value)}
+          title="設定回放起點"
+        />
+        {!replayEnabled ? (
+          <button style={ivBtnStyle(true)} onClick={onStartReplay} title="載入並進入回放">
+            開始
+          </button>
+        ) : (
+          <>
+            <button style={ivBtnStyle(false)} onClick={onStopReplay} title="離開回放並回到即時模式">
+              結束
+            </button>
+            <button style={ivBtnStyle(false)} onClick={onReplayStepBack} title="往前回退一根 K 線">
+              ◀
+            </button>
+            <button style={ivBtnStyle(replayStatus === 'playing')} onClick={onReplayPlayPause} title="播放或暫停回放">
+              {replayStatus === 'playing' ? '暫停' : '播放'}
+            </button>
+            <button style={ivBtnStyle(false)} onClick={onReplayStepForward} title="往前推進一根 K 線">
+              ▶
+            </button>
+            <select
+              style={S.select}
+              value={replaySpeed}
+              onChange={event => onReplaySpeedChange(Number(event.target.value) as ReplaySpeed)}
+              title="設定回放速度"
+            >
+              {REPLAY_SPEED_OPTIONS.map(value => (
+                <option key={value} value={value}>{value}x</option>
+              ))}
+            </select>
+            <span style={S.replayStatus}>
+              {replayLoadingFuture ? '載入中…' : replayStatusLabel[replayStatus]} · {replayProgress}
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(replayLoadedBars - 1, 0)}
+              value={Math.min(replayCursorIndex, Math.max(replayLoadedBars - 1, 0))}
+              disabled={replayLoadedBars <= 1}
+              onChange={event => onReplayScrub(Number(event.target.value))}
+              style={{ width: 120 }}
+              title="拖曳快速跳到指定回放進度"
+            />
+          </>
+        )}
+      </div>
     </div>
   );
 }

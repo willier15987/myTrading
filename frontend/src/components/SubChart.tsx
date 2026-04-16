@@ -1,6 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   createChart,
+  HistogramSeries,
+  LineSeries,
   ColorType,
   CrosshairMode,
   LineStyle,
@@ -9,26 +11,27 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { IndicatorPoint } from '../types';
-import { formatTimeTW } from '../utils/time';
+import { type AppTimeZone, formatChartTime } from '../utils/time';
 
 interface SubChartProps {
   series: IndicatorPoint[];
+  timezone: AppTimeZone;
   // App passes a mutable ref; SubChart writes its setVisibleLogicalRange fn into it
   setLogicalRangeRef: React.MutableRefObject<((from: number, to: number) => void) | null>;
 }
 
-export function SubChart({ series, setLogicalRangeRef }: SubChartProps) {
-  const containerRef   = useRef<HTMLDivElement>(null);
-  const chartRef       = useRef<IChartApi | null>(null);
-  const forceRef       = useRef<ISeriesApi<'Histogram'> | null>(null);
-  const deRef          = useRef<ISeriesApi<'Line'> | null>(null);
+export function SubChart({ series, timezone, setLogicalRangeRef }: SubChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const forceRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const deRef = useRef<ISeriesApi<'Line'> | null>(null);
 
-  // ── Init chart once ──
+  // Init chart once
   useEffect(() => {
     if (!containerRef.current) return;
 
     const chart = createChart(containerRef.current, {
-      width:  containerRef.current.clientWidth,
+      width: containerRef.current.clientWidth,
       height: containerRef.current.clientHeight,
       layout: {
         background: { type: ColorType.Solid, color: '#131722' },
@@ -47,31 +50,29 @@ export function SubChart({ series, setLogicalRangeRef }: SubChartProps) {
         borderColor: 'rgba(197,203,206,0.4)',
         timeVisible: true,
         secondsVisible: false,
-        tickMarkFormatter: (time: number) => formatTimeTW(time),
+        tickMarkFormatter: (time: number) => formatChartTime(time, timezone),
       },
       localization: {
-        timeFormatter: (time: number) => formatTimeTW(time),
+        timeFormatter: (time: number) => formatChartTime(time, timezone),
       },
       // Sub-chart is read-only; disable user scroll/scale so it only moves
       // when the main chart drives the sync
       handleScroll: false,
-      handleScale:  false,
+      handleScale: false,
     });
 
-    // ── force_ratio histogram ──
-    const forceSeries = chart.addHistogramSeries({
+    const forceSeries = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
       priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
       priceScaleId: 'right',
     });
 
     // Reference lines at 0.4 / 0.5 / 0.6
-    forceSeries.createPriceLine({ price: 0.6, color: 'rgba(38,166,154,0.5)',  lineWidth: 1, lineStyle: LineStyle.Dashed,  axisLabelVisible: true, title: '0.6' });
-    forceSeries.createPriceLine({ price: 0.5, color: 'rgba(255,255,255,0.4)', lineWidth: 1, lineStyle: LineStyle.Solid,   axisLabelVisible: true, title: '0.5' });
-    forceSeries.createPriceLine({ price: 0.4, color: 'rgba(239,83,80,0.5)',   lineWidth: 1, lineStyle: LineStyle.Dashed,  axisLabelVisible: true, title: '0.4' });
+    forceSeries.createPriceLine({ price: 0.6, color: 'rgba(38,166,154,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '0.6' });
+    forceSeries.createPriceLine({ price: 0.5, color: 'rgba(255,255,255,0.4)', lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: '0.5' });
+    forceSeries.createPriceLine({ price: 0.4, color: 'rgba(239,83,80,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '0.4' });
 
-    // ── displacement_efficiency line ──
-    const deSeries = chart.addLineSeries({
+    const deSeries = chart.addSeries(LineSeries, {
       color: '#FFC107',
       lineWidth: 1,
       priceScaleId: 'right',
@@ -81,29 +82,28 @@ export function SubChart({ series, setLogicalRangeRef }: SubChartProps) {
       crosshairMarkerRadius: 3,
     });
 
-    chartRef.current  = chart;
-    forceRef.current  = forceSeries;
-    deRef.current     = deSeries;
+    chartRef.current = chart;
+    forceRef.current = forceSeries;
+    deRef.current = deSeries;
 
-    // Expose setVisibleLogicalRange so App can drive sync from the main chart.
     // Logical range works past the data edges (unlike setVisibleRange), so the
     // sub-chart stays aligned even when the main chart scrolls into empty space.
     setLogicalRangeRef.current = (from: number, to: number) => {
       if (!chartRef.current) return;
       try {
         chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
-      } catch { /* range can be invalid during fast scroll */ }
+      } catch {
+        /* range can be invalid during fast scroll */
+      }
     };
 
-    // Resize observer
     const ro = new ResizeObserver((entries) => {
-      const e = entries[0];
-      if (e && chartRef.current) {
-        chartRef.current.applyOptions({
-          width:  e.contentRect.width,
-          height: e.contentRect.height,
-        });
-      }
+      const entry = entries[0];
+      if (!entry || !chartRef.current) return;
+      chartRef.current.applyOptions({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
     });
     ro.observe(containerRef.current);
 
@@ -113,47 +113,61 @@ export function SubChart({ series, setLogicalRangeRef }: SubChartProps) {
       chart.remove();
       chartRef.current = null;
       forceRef.current = null;
-      deRef.current    = null;
+      deRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep setter wired even if the ref object changes identity (shouldn't, but safe)
-  useLayoutEffect(() => {
-    if (!chartRef.current) return;
-    setLogicalRangeRef.current = (from: number, to: number) => {
-      try {
-        chartRef.current?.timeScale().setVisibleLogicalRange({ from, to });
-      } catch { /* ignore */ }
-    };
-  });
-
-  // ── Update data ──
   useEffect(() => {
-    if (!forceRef.current || !deRef.current || series.length === 0) return;
+    if (!chartRef.current) return;
+    chartRef.current.applyOptions({
+      timeScale: {
+        tickMarkFormatter: (time: number) => formatChartTime(time, timezone),
+      },
+      localization: {
+        timeFormatter: (time: number) => formatChartTime(time, timezone),
+      },
+    });
+  }, [timezone]);
+
+  // Update data
+  useEffect(() => {
+    if (!forceRef.current || !deRef.current) return;
+    if (series.length === 0) {
+      forceRef.current.setData([]);
+      deRef.current.setData([]);
+      return;
+    }
 
     forceRef.current.setData(
-      series.map(p => ({
-        time:  (p.t / 1000) as UTCTimestamp,
-        value: p.force_ratio,
-        color: p.force_ratio >= 0.5 ? '#26a69a' : '#ef5350',
+      series.map((point) => ({
+        time: (point.t / 1000) as UTCTimestamp,
+        value: point.force_ratio,
+        color: point.force_ratio >= 0.5 ? '#26a69a' : '#ef5350',
       })),
     );
 
     deRef.current.setData(
-      series.map(p => ({
-        time:  (p.t / 1000) as UTCTimestamp,
-        value: p.displacement_efficiency,
+      series.map((point) => ({
+        time: (point.t / 1000) as UTCTimestamp,
+        value: point.displacement_efficiency,
       })),
     );
   }, [series]);
 
   return (
     <div style={{ position: 'relative', flexShrink: 0, height: '100%' }}>
-      {/* Legend */}
-      <div style={{
-        position: 'absolute', top: 4, left: 8, zIndex: 10,
-        fontSize: 11, display: 'flex', gap: 12, pointerEvents: 'none',
-      }}>
+      <div
+        style={{
+          position: 'absolute',
+          top: 4,
+          left: 8,
+          zIndex: 10,
+          fontSize: 11,
+          display: 'flex',
+          gap: 12,
+          pointerEvents: 'none',
+        }}
+      >
         <span style={{ color: '#26a69a' }}>■ force_ratio</span>
         <span style={{ color: '#FFC107' }}>— 位移效率</span>
         <span style={{ color: '#787b86' }}>（綠色 ≥ 0.5 多方主導）</span>

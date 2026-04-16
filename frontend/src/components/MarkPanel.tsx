@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { Candle, CandleIndicators, LabelType, Mark, RangeIndicators } from '../types';
 import { LABEL_META } from '../types';
+import { type AppTimeZone, formatDateTime } from '../utils/time';
 import { useLocalStorage } from '../utils/useLocalStorage';
 
 const C = {
@@ -68,6 +69,7 @@ function KV({ k, v, color }: { k: string; v: string | number; color?: string }) 
 interface MarkPanelProps {
   symbol: string;
   interval: string;
+  timezone: AppTimeZone;
   selectedCandle: Candle | null;
   rangeStart: Candle | null;
   rangeEnd: Candle | null;
@@ -76,7 +78,7 @@ interface MarkPanelProps {
   onDeleteMark: (id: number) => void;
 }
 
-export function MarkPanel({ symbol, interval, selectedCandle, rangeStart, rangeEnd, marks, onAddMark, onDeleteMark }: MarkPanelProps) {
+export function MarkPanel({ symbol, interval, timezone, selectedCandle, rangeStart, rangeEnd, marks, onAddMark, onDeleteMark }: MarkPanelProps) {
   const [candleInd, setCandleInd] = useState<CandleIndicators | null>(null);
   const [rangeInd, setRangeInd] = useState<RangeIndicators | null>(null);
   const [loadingC, setLoadingC] = useState(false);
@@ -170,7 +172,7 @@ export function MarkPanel({ symbol, interval, selectedCandle, rangeStart, rangeE
         <div style={S.section}>
           <div style={S.sectionTitle}>K 線資訊</div>
           <div style={{ color: C.dim, fontSize: 11, marginBottom: 6 }}>
-            {new Date(selectedCandle.t).toUTCString().replace(' GMT', ' UTC')}
+            {formatDateTime(selectedCandle.t, timezone)}
           </div>
           <KV k="開 Open"  v={selectedCandle.o} />
           <KV k="高 High"  v={selectedCandle.h} color={C.green} />
@@ -184,8 +186,8 @@ export function MarkPanel({ symbol, interval, selectedCandle, rangeStart, rangeE
       {rangeStart && (
         <div style={{ ...S.section, background: 'rgba(41,98,255,0.08)' }}>
           <div style={S.sectionTitle}>區間框選</div>
-          <KV k="起點" v={new Date(rangeStart.t).toLocaleString('zh-TW', { timeZone: 'UTC', hour12: false })} />
-          <KV k="終點" v={rangeEnd ? new Date(rangeEnd.t).toLocaleString('zh-TW', { timeZone: 'UTC', hour12: false }) : '再次 Shift+點擊'} />
+          <KV k="起點" v={formatDateTime(rangeStart.t, timezone)} />
+          <KV k="終點" v={rangeEnd ? formatDateTime(rangeEnd.t, timezone) : '再次 Shift+點擊'} />
         </div>
       )}
 

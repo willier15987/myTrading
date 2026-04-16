@@ -100,6 +100,7 @@ export const api = {
     pivotN: number = 5,
     limit: number = 500,
     thresholds?: { approach?: number; rejection?: number; departureAtr?: number },
+    opts?: { end?: number },
   ): Promise<SwingPoint[]> => {
     const p = new URLSearchParams({
       symbol, interval,
@@ -109,6 +110,7 @@ export const api = {
     if (thresholds?.approach     != null) p.set('approach',      String(thresholds.approach));
     if (thresholds?.rejection    != null) p.set('rejection',     String(thresholds.rejection));
     if (thresholds?.departureAtr != null) p.set('departure_atr', String(thresholds.departureAtr));
+    if (opts?.end != null) p.set('end', String(opts.end));
     return _get(`${BASE}/swings?${p}`);
   },
 
@@ -117,20 +119,23 @@ export const api = {
     interval: string,
     lookback: number = 20,
     limit: number = 500,
+    opts?: { end?: number },
   ): Promise<{ series: IndicatorPoint[] }> => {
     const p = new URLSearchParams({ symbol, interval, lookback: String(lookback), limit: String(limit) });
+    if (opts?.end != null) p.set('end', String(opts.end));
     return _get(`${BASE}/indicators/series?${p}`);
   },
 
   getRanges: (
     symbol: string,
     interval: string,
-    opts?: { min_bars?: number; eff_threshold?: number; lookback?: number },
+    opts?: { min_bars?: number; eff_threshold?: number; lookback?: number; end?: number },
   ): Promise<DetectedRange[]> => {
     const p = new URLSearchParams({ symbol, interval });
     if (opts?.min_bars      != null) p.set('min_bars',      String(opts.min_bars));
     if (opts?.eff_threshold != null) p.set('eff_threshold', String(opts.eff_threshold));
     if (opts?.lookback      != null) p.set('lookback',      String(opts.lookback));
+    if (opts?.end           != null) p.set('end',           String(opts.end));
     return _get(`${BASE}/ranges?${p}`);
   },
 };
