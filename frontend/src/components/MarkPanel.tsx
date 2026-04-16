@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { Candle, CandleIndicators, LabelType, Mark, RangeIndicators } from '../types';
 import { LABEL_META } from '../types';
+import { formatPrice } from '../utils/price';
 import { type AppTimeZone, formatDateTime } from '../utils/time';
 import { useLocalStorage } from '../utils/useLocalStorage';
 
@@ -56,8 +57,10 @@ function nc(v: number, lo: number, hi: number, invert = false): string {
   return C.text;
 }
 
-function KV({ k, v, color }: { k: string; v: string | number; color?: string }) {
-  const display = typeof v === 'number' ? (Number.isInteger(v) ? v.toString() : v.toFixed(4)) : v;
+function KV({ k, v, color, price = false }: { k: string; v: string | number; color?: string; price?: boolean }) {
+  const display = typeof v === 'number'
+    ? (price ? formatPrice(v) : (Number.isInteger(v) ? v.toString() : v.toFixed(4)))
+    : v;
   return (
     <div style={S.row}>
       <span style={S.label}>{k}</span>
@@ -174,10 +177,10 @@ export function MarkPanel({ symbol, interval, timezone, selectedCandle, rangeSta
           <div style={{ color: C.dim, fontSize: 11, marginBottom: 6 }}>
             {formatDateTime(selectedCandle.t, timezone)}
           </div>
-          <KV k="開 Open"  v={selectedCandle.o} />
-          <KV k="高 High"  v={selectedCandle.h} color={C.green} />
-          <KV k="低 Low"   v={selectedCandle.l} color={C.red} />
-          <KV k="收 Close" v={selectedCandle.c} color={selectedCandle.c >= selectedCandle.o ? C.green : C.red} />
+          <KV k="開 Open"  v={selectedCandle.o} price />
+          <KV k="高 High"  v={selectedCandle.h} color={C.green} price />
+          <KV k="低 Low"   v={selectedCandle.l} color={C.red} price />
+          <KV k="收 Close" v={selectedCandle.c} color={selectedCandle.c >= selectedCandle.o ? C.green : C.red} price />
           <KV k="量 Volume" v={selectedCandle.v.toFixed(2)} />
         </div>
       )}

@@ -17,6 +17,7 @@ import {
 
 import type { Candle, DetectedRange, LabelType, Mark, MAConfig, Position, PositionDirection, SwingPoint, TDConfig } from '../types';
 import { LABEL_META } from '../types';
+import { formatPrice, getPriceFormat } from '../utils/price';
 import { type AppTimeZone, formatChartTime } from '../utils/time';
 import { PositionPrimitive } from './position-primitive';
 import { SelectedCandlePrimitive } from './selected-candle-primitive';
@@ -349,6 +350,12 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
       close: c.c,
     }));
     seriesRef.current.setData(data);
+    seriesRef.current.applyOptions({
+      priceFormat: {
+        type: 'price',
+        ...getPriceFormat(candles[candles.length - 1].c),
+      },
+    });
 
     if (logicalRange) {
       chartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
@@ -689,7 +696,7 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
         const h = handlesRef.current.get(drag.key);
         if (h) {
           h.dataset.price = String(price);
-          h.textContent = `${labelPrefix} ${(price as number).toFixed(4)}`;
+          h.textContent = `${labelPrefix} ${formatPrice(price as number)}`;
         }
       };
       const onUp = () => {
@@ -735,7 +742,7 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
         }
         h.style.background = color;
         h.dataset.price = String(p[field]);
-        h.textContent = `${label} ${Number(p[field]).toFixed(4)}`;
+        h.textContent = `${label} ${formatPrice(Number(p[field]))}`;
         // Replace listener on every render so it closes over the latest labelPrefix
         const onDown = (ev: MouseEvent) => startDrag(ev, p.id, field, p[field], label);
         (h as HTMLDivElement & { _onDown?: (e: MouseEvent) => void })._onDown
@@ -863,7 +870,7 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
           const pill = handlesRef.current.get(`${activeDrag.positionId}:${activeDrag.field}`);
           if (pill) {
             pill.dataset.price = String(activeDrag.price);
-            pill.textContent = `${activeDrag.label} ${activeDrag.price.toFixed(4)}`;
+            pill.textContent = `${activeDrag.label} ${formatPrice(activeDrag.price)}`;
           }
           return;
         }

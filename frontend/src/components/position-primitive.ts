@@ -14,6 +14,7 @@ import type {
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import type { Position } from '../types';
 import { pnlFraction } from '../utils/positions';
+import { formatPrice } from '../utils/price';
 
 const COLOR = {
   longEntry:   '#26a69a',
@@ -235,7 +236,5 @@ export class PositionPrimitive implements ISeriesPrimitive<Time> {
 }
 
 function fmtPrice(n: number): string {
-  if (!Number.isFinite(n)) return '-';
-  // 4 decimals is enough for most crypto; trim trailing zeros for readability
-  return Number(n.toFixed(4)).toString();
+  return formatPrice(n);
 }

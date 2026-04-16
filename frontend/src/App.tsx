@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api/client';
+import { type LiveSyncResponse } from './api/live';
 import { type ReplaySpeed, type ReplayState } from './replay/types';
 import { Chart } from './components/Chart';
 import { MarkPanel } from './components/MarkPanel';
@@ -7,6 +8,7 @@ import { PositionFormModal } from './components/PositionFormModal';
 import { PositionPanel } from './components/PositionPanel';
 import { SubChart } from './components/SubChart';
 import { Toolbar } from './components/Toolbar';
+import { type LiveSyncStatus, useLiveSync } from './hooks/useLiveSync';
 import type {
   Candle,
   DetectedRange,
@@ -131,6 +133,8 @@ export default function App() {
   const [storedPositions, setStoredPositions] = useLocalStorage<Position[]>('positions', []);
   const [showLastPrice, setShowLastPrice] = useLocalStorage<boolean>('showLastPrice', true);
   const [autoRefresh, setAutoRefresh] = useLocalStorage<boolean>('autoRefresh', true);
+  const [liveSyncEnabled, setLiveSyncEnabled] = useLocalStorage<boolean>('liveSyncEnabled', false);
+  const [liveSyncIntervalSec, setLiveSyncIntervalSec] = useLocalStorage<number>('liveSyncIntervalSec', 60);
   const [timezone, setTimezone] = useLocalStorage<AppTimeZone>('timezone', 'Asia/Taipei');
 
   const [liveCandles, setLiveCandles] = useState<Candle[]>([]);
@@ -165,6 +169,10 @@ export default function App() {
   const [modal, setModal] = useState<ModalState>(null);
   const [placingDirection, setPlacingDirection] = useState<PositionDirection | null>(null);
   const [replayAnchorInvalid, setReplayAnchorInvalid] = useState(false);
+  const [liveSyncStatus, setLiveSyncStatus] = useState<LiveSyncStatus>('idle');
+  const [liveSyncLastAt, setLiveSyncLastAt] = useState<number | null>(null);
+  const [liveSyncError, setLiveSyncError] = useState<string | null>(null);
+  const [liveSyncResults, setLiveSyncResults] = useState<LiveSyncResponse['results']>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [replayLoadingFuture, setReplayLoadingFuture] = useState(false);
 
@@ -178,6 +186,7 @@ export default function App() {
   const jumpTokenRef = useRef(0);
   const replayAnchorTsRef = useRef<number | null>(null);
   const toastIdRef = useRef(0);
+  const liveViewKeyRef = useRef(`${symbol}:${interval}`);
 
   const candles = useMemo(() => {
     if (!replayState.enabled) return liveCandles;
@@ -213,6 +222,10 @@ export default function App() {
     const startIndex = candles.findIndex(candle => candle.t === firstIndicatorTs);
     return startIndex >= 0 ? startIndex : null;
   }, [candles, indicatorSeries]);
+  const liveSyncCurrentResult = useMemo(
+    () => liveSyncResults.find(result => result.interval === interval) ?? null,
+    [interval, liveSyncResults],
+  );
 
   useEffect(() => {
     replaySourceCandlesRef.current = replaySourceCandles;
@@ -221,6 +234,10 @@ export default function App() {
   useEffect(() => {
     replayAnchorTsRef.current = replayAnchorTs;
   }, [replayAnchorTs]);
+
+  useEffect(() => {
+    liveViewKeyRef.current = `${symbol}:${interval}`;
+  }, [interval, symbol]);
 
   const queueJump = useCallback((ts: number) => {
     jumpTokenRef.current += 1;
@@ -252,6 +269,30 @@ export default function App() {
   const refreshLiveMarks = useCallback(() => {
     api.getMarks(symbol, interval).then(setLiveMarks).catch(error => reportError('標記資料載入失敗。', error));
   }, [interval, reportError, symbol]);
+
+  const refreshLiveTail = useCallback(async (targetSymbol: string, targetInterval: string) => {
+    try {
+      const response = await api.getKlines(targetSymbol, targetInterval, { limit: INITIAL_LIMIT });
+      if (liveViewKeyRef.current !== `${targetSymbol}:${targetInterval}`) return;
+      setLiveCandles(prev => mergeUniqueCandles([...prev, ...response.candles]));
+    } catch (error) {
+      reportError('即時同步後刷新 K 線失敗。', error);
+    }
+  }, [reportError]);
+
+  const handleLiveSyncStatus = useCallback((status: LiveSyncStatus, error?: string) => {
+    setLiveSyncStatus(status);
+    setLiveSyncError(status === 'error' ? (error ?? '即時同步失敗。') : null);
+  }, []);
+
+  const handleLiveSyncSynced = useCallback((response: LiveSyncResponse) => {
+    setLiveSyncLastAt(response.fetched_at);
+    setLiveSyncResults(response.results);
+
+    const currentIntervalResult = response.results.find(result => result.interval === interval);
+    if (!currentIntervalResult || currentIntervalResult.added <= 0) return;
+    void refreshLiveTail(response.symbol, interval);
+  }, [interval, refreshLiveTail]);
 
   const loadLiveData = useCallback(async () => {
     setLoadingMsg('載入 K 線中...');
@@ -297,6 +338,13 @@ export default function App() {
 
     void loadLiveData();
   }, [interval, symbol, loadLiveData]);
+
+  useEffect(() => {
+    setLiveSyncLastAt(null);
+    setLiveSyncError(null);
+    setLiveSyncResults([]);
+    setLiveSyncStatus('idle');
+  }, [symbol]);
 
   useEffect(() => {
     if (replayState.enabled || replayAnchorInvalid || liveCandles.length === 0) return;
@@ -871,6 +919,15 @@ export default function App() {
     return () => window.clearInterval(timerId);
   }, [autoRefresh, interval, replayState.enabled, reportError, symbol]);
 
+  useLiveSync({
+    enabled: liveSyncEnabled,
+    symbol,
+    pollSec: liveSyncIntervalSec,
+    replayEnabled: replayState.enabled,
+    onSynced: handleLiveSyncSynced,
+    onStatus: handleLiveSyncStatus,
+  });
+
   const handleDateJump = useCallback((ts: number) => {
     queueJump(ts);
   }, [queueJump]);
@@ -931,6 +988,16 @@ export default function App() {
         autoRefresh={autoRefresh}
         autoRefreshLocked={replayState.enabled}
         onToggleAutoRefresh={() => setAutoRefresh(value => !value)}
+        liveSyncEnabled={liveSyncEnabled}
+        liveSyncLocked={replayState.enabled}
+        liveSyncPollSec={liveSyncIntervalSec}
+        liveSyncStatus={liveSyncStatus}
+        liveSyncLastAt={liveSyncLastAt}
+        liveSyncCurrentAdded={liveSyncCurrentResult?.added ?? null}
+        liveSyncError={liveSyncError}
+        liveSyncResults={liveSyncResults}
+        onToggleLiveSync={() => setLiveSyncEnabled(value => !value)}
+        onLiveSyncPollSecChange={setLiveSyncIntervalSec}
         timezone={timezone}
         onTimezoneChange={setTimezone}
         onOpenLong={() => setPlacingDirection('long')}

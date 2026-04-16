@@ -68,7 +68,9 @@ npm run dev
 | 交易對搜尋 | 工具列左側輸入框，即時篩選 |
 | 時間週期 | 15m / 1h / 4h / 1d |
 | 日期跳轉 | 輸入日期時間，圖表自動捲到該位置 |
-| 自動更新 | 每 30 秒更新最新 K 線（可關閉；回放模式自動停用） |
+| 即時同步 | 以 15s / 30s / 60s / 300s 輪詢，補齊當前 symbol 的 15m / 1h / 4h / 1d 最新 K 線到資料庫（可關閉；回放模式自動停用） |
+| 自動更新 | 每 30 秒從資料庫重讀最新 K 線（可關閉；回放模式自動停用） |
+| 價格顯示 | 價格 `>= 1` 最多顯示到小數點後 2 位；價格 `< 1` 最多顯示到小數點後 6 位 |
 | 時區切換 | 本地時間 / UTC / Asia/Taipei |
 
 ### 技術指標
@@ -109,8 +111,9 @@ npm run dev
 - 設定起始時間 → 點「開始」→ 自動載入暖機 K 線並跳到起點
 - 播放 / 暫停 / 逐根步進（前進/後退）
 - 播放速度：1x / 2x / 4x / 8x
+- 可用進度條 scrubber 拖曳到已載入的任意回放位置
 - 回放期間可正常使用**標記系統**與**倉位工具**（資料不影響 live 模式）
-- 自動更新在回放模式自動停用
+- 即時同步與自動更新在回放模式自動停用
 
 ---
 
@@ -139,13 +142,27 @@ npm run dev
   → 拖曳任意線段微調
 ```
 
+### 即時同步流程
+
+```
+工具列「即時同步」
+  → 打開 toggle
+  → 選擇輪詢週期（15s / 30s / 60s / 300s）
+  → 後端補齊當前 symbol 的 15m / 1h / 4h / 1d 到 SQLite
+  → 狀態點顯示 待命 / 同步中 / 正常 / 錯誤
+  → 若當前顯示時框有新 K 線，主圖會自動刷新尾端資料
+```
+
+> `即時同步` 是「交易所 → DB」，`自動更新` 是「DB → UI」。
+> 若你已另外執行 `python fetch_klines.py --watch`，建議擇一使用，避免重複打 Binance API。
+
 ### 回放流程
 
 ```
 工具列最右側「回放」區塊
   → 輸入起始時間（或點選 K 線後直接開始，用 selectedCandle 為起點）
   → 點「開始」→ 載入資料後自動跳至起點
-  → 播放 / 暫停 / 逐根步進
+  → 播放 / 暫停 / 逐根步進 / 拖曳進度條
   → 可正常標記和開倉（回放內獨立資料）
   → 點「結束」離開回放，回到即時模式
 ```
@@ -173,9 +190,9 @@ npm run dev
 
 | 鍵 | 說明 |
 |----|------|
-| `Space` | 播放 / 暫停（待實作，見 BACKLOG） |
-| `]` | 步進下一根（待實作） |
-| `[` | 步進上一根（待實作） |
+| `Space` | 播放 / 暫停 |
+| `]` 或 `→` | 步進下一根 |
+| `[` | 步進上一根 |
 
 ---
 
@@ -218,6 +235,12 @@ K 線資料可能較舊，瀏覽器顯示的是現在時間。
 
 重新整理瀏覽器（F5）即可。後端每次請求都直接查資料庫，不做快取。
 
+如果你希望直接從交易所補最新資料，請開啟工具列的**即時同步**，或另外執行：
+```bash
+cd trading/
+python fetch_klines.py --watch --poll 30
+```
+
 ### 前端顯示「Cannot find package.json」
 
 確認是在 `frontend/` 目錄下執行 `npm run dev`：
@@ -235,31 +258,37 @@ trading/
 ├── backend/
 │   ├── main.py              ← FastAPI 入口
 │   ├── db.py                ← 資料庫路徑設定
-│   ├── core/                ← 量化計算（ATR、force_ratio、波段偵測等）
-│   └── routes/              ← API 端點（klines、marks、swings、ranges、indicators）
+│   ├── core/                ← 量化計算與共用抓取邏輯（ATR、force_ratio、波段偵測、live_fetch）
+│   └── routes/              ← API 端點（klines、marks、swings、ranges、indicators、live）
 ├── frontend/
 │   └── src/
-│       ├── App.tsx           ← 主應用程式（狀態管理、回放邏輯）
+│       ├── App.tsx           ← 主應用程式（狀態管理、即時同步、回放邏輯）
 │       ├── components/
 │       │   ├── Chart.tsx               ← 主圖（lightweight-charts v5）
 │       │   ├── SubChart.tsx            ← 力道子圖
-│       │   ├── Toolbar.tsx             ← 工具列（含回放控制區）
+│       │   ├── Toolbar.tsx             ← 工具列（含即時同步 / 回放控制區）
 │       │   ├── MarkPanel.tsx           ← 右側標記面板
 │       │   ├── PositionPanel.tsx       ← 右側倉位面板
 │       │   ├── PositionFormModal.tsx   ← 開倉/平倉 Modal
 │       │   ├── position-primitive.ts   ← TradingView 風格倉位 Primitive
 │       │   └── selected-candle-primitive.ts
+│       ├── hooks/
+│       │   └── useLiveSync.ts ← 即時同步 polling hook
 │       ├── replay/
 │       │   └── types.ts     ← 回放狀態型別
 │       ├── utils/
 │       │   ├── positions.ts ← PnL 計算工具
 │       │   ├── time.ts      ← 時區格式化工具
+│       │   ├── price.ts     ← 價格顯示格式工具
 │       │   └── useLocalStorage.ts
-│       ├── api/             ← 後端 API 客戶端
+│       ├── api/             ← 後端 API 客戶端（含 live-sync）
 │       └── types.ts         ← 共用型別定義
 ├── data/
+│   ├── crypto_data.db       ← K 線資料
 │   └── marks.db             ← 標記資料（自動建立）
+├── fetch_klines.py          ← CLI 抓取器（支援 watch 模式）
 ├── BACKLOG.md               ← 待辦與改善清單
+├── LIVE_FETCH_PLAN.md       ← 即時同步功能計畫書
 └── run.py                   ← 啟動腳本
 ```
 

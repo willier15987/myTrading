@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Position } from '../types';
 import { isOpen, pnlFraction, riskReward, positionsToCSV, downloadCSV } from '../utils/positions';
+import { formatPrice } from '../utils/price';
 import { type AppTimeZone, formatChartTime } from '../utils/time';
 import { useLocalStorage } from '../utils/useLocalStorage';
 
@@ -126,15 +127,15 @@ export function PositionPanel({ symbol, interval, timezone, positions, currentPr
                 </div>
 
                 <div style={S.kv}><span>進場</span><span style={S.kvVal}>{formatChartTime(p.entry_ts / 1000, timezone)}</span></div>
-                <div style={S.kv}><span>進場價</span><span style={S.kvVal}>{p.entry_price}</span></div>
-                <div style={S.kv}><span>TP / SL</span><span style={S.kvVal}>{p.tp_price} / {p.sl_price}</span></div>
+                <div style={S.kv}><span>進場價</span><span style={S.kvVal}>{formatPrice(p.entry_price)}</span></div>
+                <div style={S.kv}><span>TP / SL</span><span style={S.kvVal}>{formatPrice(p.tp_price)} / {formatPrice(p.sl_price)}</span></div>
                 {rr != null && (
                   <div style={S.kv}><span>R/R</span><span style={S.kvVal}>{rr.toFixed(2)}</span></div>
                 )}
                 {!open && (
                   <>
                     <div style={S.kv}><span>出場</span><span style={S.kvVal}>{p.exit_ts != null ? formatChartTime(p.exit_ts / 1000, timezone) : '-'}</span></div>
-                    <div style={S.kv}><span>出場價</span><span style={S.kvVal}>{p.exit_price}</span></div>
+                    <div style={S.kv}><span>出場價</span><span style={S.kvVal}>{formatPrice(p.exit_price)}</span></div>
                   </>
                 )}
                 <div style={S.kv}>

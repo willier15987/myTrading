@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
+import type { IntervalResult } from '../api/live';
+import type { LiveSyncStatus } from '../hooks/useLiveSync';
 import type { ReplaySpeed, ReplayState } from '../replay/types';
 import type { PositionDirection, SwingThresholds, SymbolInfo } from '../types';
-import { type AppTimeZone, getTimeZoneLabel, parseDateTimeInput } from '../utils/time';
+import { type AppTimeZone, formatDateTime, getTimeZoneLabel, parseDateTimeInput } from '../utils/time';
 
 const INTERVALS = ['15m', '1h', '4h', '1d'] as const;
+const LIVE_SYNC_OPTIONS = [15, 30, 60, 300] as const;
 const PIVOT_N_OPTIONS = [3, 5, 8, 10] as const;
 const REPLAY_SPEED_OPTIONS: ReplaySpeed[] = [1, 2, 4, 8];
 const TIMEZONE_OPTIONS: AppTimeZone[] = ['local', 'UTC', 'Asia/Taipei'];
@@ -103,6 +106,27 @@ const S: Record<string, React.CSSProperties> = {
     outline: 'none',
     cursor: 'pointer',
   },
+  liveBox: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '4px 8px',
+    borderRadius: 6,
+    background: '#151821',
+    border: '1px solid #2a2e39',
+  },
+  liveStatus: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    fontSize: 12,
+    color: '#d1d4dc',
+  },
+  liveMeta: {
+    fontSize: 12,
+    color: '#9aa0ac',
+    minWidth: 108,
+  },
   replayBox: {
     display: 'flex',
     alignItems: 'center',
@@ -154,6 +178,16 @@ interface ToolbarProps {
   autoRefresh: boolean;
   autoRefreshLocked: boolean;
   onToggleAutoRefresh: () => void;
+  liveSyncEnabled: boolean;
+  liveSyncLocked: boolean;
+  liveSyncPollSec: number;
+  liveSyncStatus: LiveSyncStatus;
+  liveSyncLastAt: number | null;
+  liveSyncCurrentAdded: number | null;
+  liveSyncError: string | null;
+  liveSyncResults: IntervalResult[];
+  onToggleLiveSync: () => void;
+  onLiveSyncPollSecChange: (seconds: number) => void;
   timezone: AppTimeZone;
   onTimezoneChange: (timezone: AppTimeZone) => void;
   onOpenLong: () => void;
@@ -184,6 +218,58 @@ const replayStatusLabel: Record<ReplayState['status'], string> = {
   playing: '播放中',
   ended: '已到尾端',
 };
+
+const liveSyncStatusLabel: Record<LiveSyncStatus, string> = {
+  idle: '待命',
+  syncing: '同步中',
+  ok: '正常',
+  error: '錯誤',
+};
+
+function getLiveSyncColor(status: LiveSyncStatus): string {
+  switch (status) {
+    case 'syncing':
+      return '#42a5f5';
+    case 'ok':
+      return '#26a69a';
+    case 'error':
+      return '#ef5350';
+    default:
+      return '#787b86';
+  }
+}
+
+function formatLiveSyncMeta(
+  enabled: boolean,
+  lastAt: number | null,
+  currentAdded: number | null,
+  timezone: AppTimeZone,
+): string {
+  if (!enabled) return '未啟用';
+  if (lastAt == null) return '等待首次同步';
+
+  const base = formatDateTime(lastAt, timezone).slice(11);
+  if (currentAdded != null && currentAdded > 0) {
+    return `上次 ${base} (+${currentAdded})`;
+  }
+  return `上次 ${base}`;
+}
+
+function formatLiveSyncTitle(
+  locked: boolean,
+  error: string | null,
+  results: IntervalResult[],
+): string {
+  if (locked) return '回放中停用即時同步';
+  if (error) return error;
+  if (results.length === 0) return '同步當前 symbol 的 15m / 1h / 4h / 1d 到資料庫';
+  return results.map(result => {
+    if (result.skipped) {
+      return `${result.interval}: ${result.reason ?? 'skipped'}`;
+    }
+    return `${result.interval}: +${result.added}`;
+  }).join(' | ');
+}
 
 export function Toolbar({
   symbol,
@@ -219,6 +305,16 @@ export function Toolbar({
   autoRefresh,
   autoRefreshLocked,
   onToggleAutoRefresh,
+  liveSyncEnabled,
+  liveSyncLocked,
+  liveSyncPollSec,
+  liveSyncStatus,
+  liveSyncLastAt,
+  liveSyncCurrentAdded,
+  liveSyncError,
+  liveSyncResults,
+  onToggleLiveSync,
+  onLiveSyncPollSecChange,
   timezone,
   onTimezoneChange,
   onOpenLong,
@@ -294,6 +390,10 @@ export function Toolbar({
   const replayProgress = replayLoadedBars > 0
     ? `${Math.min(replayCursorIndex + 1, replayLoadedBars)}/${replayLoadedBars}`
     : '0/0';
+
+  const liveSyncTitle = formatLiveSyncTitle(liveSyncLocked, liveSyncError, liveSyncResults);
+  const liveSyncMeta = formatLiveSyncMeta(liveSyncEnabled, liveSyncLastAt, liveSyncCurrentAdded, timezone);
+  const liveSyncColor = getLiveSyncColor(liveSyncStatus);
 
   return (
     <div style={S.bar}>
@@ -477,6 +577,44 @@ export function Toolbar({
       >
         自動更新
       </button>
+
+      <div style={S.liveBox} title={liveSyncTitle}>
+        <button
+          style={ivBtnStyle(liveSyncEnabled, liveSyncLocked)}
+          onClick={() => {
+            if (!liveSyncLocked) onToggleLiveSync();
+          }}
+          title={liveSyncLocked ? '回放中停用即時同步' : '同步當前 symbol 的所有時框到資料庫'}
+        >
+          即時同步
+        </button>
+        <select
+          style={{ ...S.select, opacity: liveSyncLocked ? 0.45 : 1 }}
+          value={liveSyncPollSec}
+          disabled={liveSyncLocked}
+          onChange={event => onLiveSyncPollSecChange(Number(event.target.value))}
+          title="設定即時同步輪詢週期"
+        >
+          {LIVE_SYNC_OPTIONS.map(value => (
+            <option key={value} value={value}>{value}s</option>
+          ))}
+        </select>
+        <span style={S.liveStatus}>
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: liveSyncColor,
+              boxShadow: liveSyncStatus === 'syncing' ? `0 0 0 4px ${liveSyncColor}22` : 'none',
+              flexShrink: 0,
+            }}
+          />
+          {liveSyncStatusLabel[liveSyncStatus]}
+        </span>
+        <span style={S.liveMeta}>{liveSyncMeta}</span>
+      </div>
+
       <select
         style={S.select}
         value={timezone}

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import klines, indicators, marks, swings, series, ranges
+from .routes import klines, indicators, live, marks, swings, series, ranges
 from .db import init_marks_db
 
 app = FastAPI(title="Trading Analysis API", version="1.0.0")
@@ -16,6 +16,7 @@ app.add_middleware(
 
 app.include_router(klines.router)
 app.include_router(indicators.router)
+app.include_router(live.router)
 app.include_router(marks.router)
 app.include_router(swings.router)
 app.include_router(series.router)

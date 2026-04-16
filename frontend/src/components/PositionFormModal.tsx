@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { PositionDirection, Position } from '../types';
 import { pnlFraction, riskReward } from '../utils/positions';
+import { formatPrice } from '../utils/price';
 import { type AppTimeZone, formatChartTime, parseDateTimeInput, toDateTimeInputValue } from '../utils/time';
 
 interface EntryDraft {
@@ -172,9 +173,9 @@ function ExitForm({ position, draft, timezone, onSubmit, onCancel }: Extract<Pro
         平倉 — {position.direction === 'long' ? '多頭' : '空頭'}
       </div>
       <div style={S.info}>
-        進場：{formatChartTime(position.entry_ts / 1000, timezone)} @ {position.entry_price}
+        進場：{formatChartTime(position.entry_ts / 1000, timezone)} @ {formatPrice(position.entry_price)}
         <br />
-        TP {position.tp_price} · SL {position.sl_price}
+        TP {formatPrice(position.tp_price)} · SL {formatPrice(position.sl_price)}
       </div>
 
       <div style={S.row}>

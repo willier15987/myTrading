@@ -1,142 +1,68 @@
 # 待辦與改善清單
 
-> 由程式碼審查（2026-04-16）產出。依優先度排列。
+> 2026-04-16 更新。已移除已完成的回放與即時同步項目，以下只保留目前仍待處理的內容。
 
 ---
 
-## 高優先（影響日常使用）
+## 中優先
 
-### BUG-01 — 回放錨點時間輸入失敗無回饋
-**位置**：`App.tsx` `handleReplayAnchorInputChange`
+### PERF-01 — 子圖時間偏移在回放推進後可能漂移
+**位置**：`App.tsx` / `SubChart.tsx`
 
-`parseDateTimeInput` 解析失敗時靜默 return；使用者點「開始」沒有反應，不知道是時間格式有問題。
+力道子圖目前仍依賴主圖可視範圍偏移同步；在回放長時間推進、前後補資料的情境下，仍可能出現主圖與子圖對齊誤差。
 
-**修法**：解析失敗時清空 `replayAnchorTs` 並顯示提示（toast 或 input 邊框變紅）。
-
----
-
-### BUG-02 — 方向鍵可選到早於回放游標的 K 線
-**位置**：`App.tsx` 鍵盤 handler（`ArrowLeft`）
-
-回放模式下 `ArrowLeft` 可以把 selectedCandle 往前移到 cursorIndex 之前的 K 線，在那裡放倉位會造成時序錯亂（entry_ts < 目前回放時間）。
-
-**修法**：回放模式中禁用 ArrowLeft；或限制 `nextIndex` 不得小於 `replayState.cursorIndex`。
+**方向**：
+- 回放啟動時一次抓齊對應指標資料
+- 或在回放模式下對子圖採獨立時間軸同步策略
 
 ---
 
-### FEAT-01 — 回放倉位退出後消失，無任何警告
-**位置**：`App.tsx` `exitReplay`
+### PERF-02 — 高速回放效能仍有優化空間
+**位置**：`App.tsx` / `Chart.tsx`
 
-回放期間開的倉位儲存在 `replayPositions`（非持久），退出後全部清空，沒有任何確認提示。
+目前回放以 `setInterval` 推進 cursor，速度提高後會頻繁觸發 `candles` 切片、圖表更新與多個 side effect；資料量大時仍可能感到卡頓。
 
-**修法**：退出前若 `replayPositions.length > 0`，彈出確認框：「您有 N 個回放倉位，退出後將清除，確定離開？」；或加「匯出 CSV」按鈕。
-
----
-
-### FEAT-02 — 回放控制沒有鍵盤捷鍵
-**位置**：`App.tsx` 鍵盤 handler
-
-須用滑鼠點擊工具列按鈕，效率低。
-
-**建議快捷鍵**：
-
-| 鍵 | 動作 |
-|----|------|
-| `Space` | 播放 / 暫停 |
-| `]` 或 `→`（回放模式） | 步進下一根 |
-| `[` | 步進上一根 |
+**方向**：
+- 改為 `requestAnimationFrame` 驅動
+- 高倍速時批次前進多根 K 線
+- 進一步減少每步進都必須重算的 UI 區塊
 
 ---
 
-## 中優先（UX 明顯缺口）
+### FEAT-01 — live-sync 與 auto-refresh 仍是兩段式機制
+**位置**：`App.tsx`
 
-### BUG-03 — 進入回放後沒有自動選中錨點 K 線
-**位置**：`App.tsx` `enterReplay`
+目前語意是：
+- `即時同步`：交易所 → SQLite
+- `自動更新`：SQLite → UI
 
-進入回放後 `setSelectedCandle(null)` 清空選擇，但沒有選中錨點 K 線，使用者缺乏視覺起點。
+這樣邏輯清楚，但也代表有兩組輪詢與兩組開關。若後續想簡化 UX，可考慮整合成單一資料刷新管線。
 
-**修法**：`setSelectedCandle(anchorCandle)` 取代 `setSelectedCandle(null)`。
-
----
-
-### BUG-04 — 前向預載進行時播放卡住無任何提示
-**位置**：`App.tsx` 播放 interval 邏輯
-
-`replayHasMoreFutureRef.current === true` 時 cursorIndex 不前進，畫面凍住，使用者誤以為故障。
-
-**修法**：加一個 `replayLoadingFuture` state，工具列顯示「載入中…」或 spinner；預載完成後自動繼續播放。
+**方向**：
+- 保留兩層架構，但由 live-sync 成功後主動觸發 UI 尾端刷新
+- 或重新設計成單一「即時模式」開關
 
 ---
 
-### FEAT-03 — 缺乏全域錯誤通知（Toast）
-目前所有 API 失敗都只 `console.error`：前向預載失敗、歷史資料抓取失敗等，使用者看不到。
+## 低優先
 
-**建議**：加一個輕量 toast/snackbar（可用純 CSS+React state，不需第三方套件），統一顯示 3 秒後自動消失。
+### FEAT-02 — live-sync 目前只支援單一 symbol
+**位置**：`useLiveSync.ts` / `Toolbar.tsx`
 
----
-
-### FEAT-04 — 倉位 TP/SL 拖曳缺乏合法性驗證
-**位置**：`App.tsx` `handlePositionUpdate`
-
-拖曳可以把多頭 TP 設到 entry 以下，或 SL 設到 entry 以上，造成邏輯錯誤。
-
-**修法**：在 `handlePositionUpdate` 或 `onPositionUpdate` 中加入方向驗證：
-```
-long:  tp_price > entry_price, sl_price < entry_price
-short: tp_price < entry_price, sl_price > entry_price
-```
-違反時靜默恢復原值（或顯示短暫警告）。
+現在只會同步當前圖表所在的 symbol。若之後有 watchlist 需求，可以支援額外釘住幾個 symbol 在背景同步。
 
 ---
 
-## 低優先（體驗優化）
+### FEAT-03 — live-sync 仍採 polling，尚未切 WebSocket
+**位置**：`backend/core/live_fetch.py`
 
-### PERF-01 — 子圖時間偏移在回放推進後漂移
-**位置**：`App.tsx` `onVisibleLogicalRangeChange` callback
-
-```
-offset = candlesLenRef.current - indicatorLenRef.current
-```
-
-回放推進時 `candlesLenRef` 增加，但指標資料沒有跟著補抓，偏移量會越來越不準，力道子圖可能對不齊。
-
-**修法**：回放啟動時一次抓取對應的指標資料，或切換至回放模式時隱藏子圖。
+目前是定時補 K 線，簡單穩定，但延遲仍是秒級到分鐘級。若未來需要更即時的體驗，可評估 Binance `@kline` streams。
 
 ---
 
-### FEAT-05 — 分頁隱藏時回放繼續播放
-切到其他分頁後回來，游標已跑很遠。
+## 已知限制
 
-**修法**：監聽 `document.visibilitychange`，隱藏時自動暫停（auto-refresh 已有相同邏輯可參考）。
-
----
-
-### FEAT-06 — 回放時間軸缺乏 Scrubber
-目前只能單步或修改 datetime-local 後重新啟動，無法快速跳到任意進度。
-
-**建議**：工具列加 `<input type="range" min={0} max={replayLoadedBars - 1} value={replayCursorIndex} />`，拖動時暫停並跳至對應 index。
-
----
-
-### FEAT-07 — 回放結束後無統計摘要
-播放完成後除了狀態顯示「已到尾端」外沒有任何回顧資訊。
-
-**建議**：回放結束時顯示小卡片：
-- 共走過 N 根 K 線
-- 開了 N 個倉位（N 多 / N 空）
-- 放置了 N 個標記
-
----
-
-### PERF-02 — 高速播放效能（8x = 125ms/bar）
-每根 K 線觸發一次 `candles` useMemo → Chart re-render → `setData()`。在 1 分鐘圖等密集資料下可能感覺頓。
-
-**建議**：批次更新 cursorIndex（例如一次跳 2–4 根），或改為 requestAnimationFrame 驅動而非 setInterval。
-
----
-
-## 已知限制（暫不處理）
-
-- 回放模式不支援儲存/恢復 session（marks + positions）
-- 力道子圖在回放期間精確度有限（後端指標以已知 K 線計算）
-- 目前僅支援讀取 SQLite 靜態資料，無法接入即時 WebSocket 行情
+- 回放模式不支援儲存 / 恢復 session（marks + positions）
+- 力道子圖在回放期間的精確度仍受限於已知 K 線資料
+- 即時同步目前只支援 polling，不做 WebSocket 推播
+- 若同時開啟 `即時同步` 與 `python fetch_klines.py --watch`，雖然資料不會壞，但會重複打 Binance API
