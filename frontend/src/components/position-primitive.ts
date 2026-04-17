@@ -23,36 +23,60 @@ const COLOR = {
   sl:          '#ef5350',
   profitFill:  'rgba(38,166,154,0.15)',
   lossFill:    'rgba(239,83,80,0.15)',
+  closedProfitFill: 'rgba(38,166,154,0.24)',
+  closedLossFill:   'rgba(239,83,80,0.24)',
+  closedProfitStroke: 'rgba(38,166,154,0.9)',
+  closedLossStroke:   'rgba(239,83,80,0.9)',
+  closedEdge: 'rgba(255,255,255,0.2)',
   labelText:   '#ffffff',
 };
 
 interface Dims {
   entryY: number;
-  tpY: number;
-  slY: number;
+  exitY: number | null;
+  tpY: number | null;
+  slY: number | null;
   xStart: number;
   xEnd: number;
+  isClosed: boolean;
 }
 
 // ── Renderers ──────────────────────────────────────────────
 
 class BandRenderer implements IPrimitivePaneRenderer {
-  constructor(private dims: Dims | null) {}
+  constructor(private dims: Dims | null, private position: Position) {}
 
   draw(target: CanvasRenderingTarget2D) {
     const dims = this.dims;
     if (!dims) return;
     target.useMediaCoordinateSpace(scope => {
       const ctx = scope.context;
-      const { entryY, tpY, slY, xStart, xEnd } = dims;
-      const w = xEnd - xStart;
+      const { entryY, exitY, tpY, slY, xStart, xEnd, isClosed } = dims;
+      const left = Math.min(xStart, xEnd);
+      const w = Math.max(3, Math.abs(xEnd - xStart));
       if (w <= 0) return;
 
+      if (isClosed) {
+        if (exitY == null) return;
+        const style = getClosedTradeStyle(this.position);
+        const top = Math.min(entryY, exitY);
+        const h = Math.max(3, Math.abs(entryY - exitY));
+
+        ctx.fillStyle = style.fill;
+        ctx.fillRect(left, top, w, h);
+
+        ctx.strokeStyle = COLOR.closedEdge;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(left + 0.5, top + 0.5, Math.max(1, w - 1), Math.max(1, h - 1));
+        return;
+      }
+
+      if (tpY == null || slY == null) return;
       ctx.fillStyle = COLOR.profitFill;
-      ctx.fillRect(xStart, Math.min(entryY, tpY), w, Math.abs(entryY - tpY));
+      ctx.fillRect(left, Math.min(entryY, tpY), w, Math.abs(entryY - tpY));
 
       ctx.fillStyle = COLOR.lossFill;
-      ctx.fillRect(xStart, Math.min(entryY, slY), w, Math.abs(entryY - slY));
+      ctx.fillRect(left, Math.min(entryY, slY), w, Math.abs(entryY - slY));
     });
   }
 }
@@ -65,8 +89,38 @@ class LineRenderer implements IPrimitivePaneRenderer {
     if (!dims) return;
     target.useMediaCoordinateSpace(scope => {
       const ctx = scope.context;
-      const { entryY, tpY, slY, xStart, xEnd } = dims;
+      const { entryY, exitY, tpY, slY, xStart, xEnd, isClosed } = dims;
       const entryColor = this.position.direction === 'long' ? COLOR.longEntry : COLOR.shortEntry;
+
+      if (isClosed) {
+        if (exitY == null) return;
+        const style = getClosedTradeStyle(this.position);
+        const top = Math.min(entryY, exitY);
+        const bottom = Math.max(entryY, exitY);
+
+        ctx.strokeStyle = style.stroke;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(xStart, entryY);
+        ctx.lineTo(xEnd, exitY);
+        ctx.stroke();
+
+        ctx.strokeStyle = COLOR.closedEdge;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(xStart, top);
+        ctx.lineTo(xStart, bottom);
+        ctx.moveTo(xEnd, top);
+        ctx.lineTo(xEnd, bottom);
+        ctx.stroke();
+
+        drawAnchor(ctx, xStart, entryY, entryColor);
+        drawAnchor(ctx, xEnd, exitY, style.stroke);
+        return;
+      }
+
+      if (tpY == null || slY == null) return;
 
       // Entry (thick solid)
       ctx.strokeStyle = entryColor;
@@ -111,9 +165,11 @@ class LineRenderer implements IPrimitivePaneRenderer {
 // ── Pane views ─────────────────────────────────────────────
 
 class BandPaneView implements IPrimitivePaneView {
-  private _renderer = new BandRenderer(null);
-  constructor(private source: PositionPrimitive) {}
-  update(): void { this._renderer = new BandRenderer(this.source.getDims()); }
+  private _renderer: BandRenderer;
+  constructor(private source: PositionPrimitive) {
+    this._renderer = new BandRenderer(null, source.position);
+  }
+  update(): void { this._renderer = new BandRenderer(this.source.getDims(), this.source.position); }
   renderer(): IPrimitivePaneRenderer { return this._renderer; }
   zOrder(): PrimitivePaneViewZOrder { return 'bottom'; }
 }
@@ -138,7 +194,9 @@ class AxisView implements ISeriesPrimitiveAxisView {
   coordinate(): number {
     const d = this.source.getDims();
     if (!d) return -1;
-    return this.kind === 'entry' ? d.entryY : this.kind === 'tp' ? d.tpY : d.slY;
+    if (this.kind === 'entry') return d.entryY;
+    if (this.kind === 'tp') return d.tpY ?? -1;
+    return d.slY ?? -1;
   }
 
   text(): string {
@@ -181,6 +239,7 @@ export class PositionPrimitive implements ISeriesPrimitive<Time> {
   private _chart?: IChartApi;
   private _series?: ISeriesApi<SeriesType>;
   private _requestUpdate?: () => void;
+  private static readonly EMPTY_AXIS_VIEWS: readonly ISeriesPrimitiveAxisView[] = [];
 
   private _bandView = new BandPaneView(this);
   private _lineView = new LinePaneView(this);
@@ -210,7 +269,9 @@ export class PositionPrimitive implements ISeriesPrimitive<Time> {
   }
 
   paneViews(): readonly IPrimitivePaneView[] { return [this._bandView, this._lineView]; }
-  priceAxisViews(): readonly ISeriesPrimitiveAxisView[] { return this._axisViews; }
+  priceAxisViews(): readonly ISeriesPrimitiveAxisView[] {
+    return isClosedPosition(this.position) ? PositionPrimitive.EMPTY_AXIS_VIEWS : this._axisViews;
+  }
 
   setPosition(next: Position): void {
     this.position = next;
@@ -224,17 +285,57 @@ export class PositionPrimitive implements ISeriesPrimitive<Time> {
     const series = this._series;
     if (!chart || !series) return null;
     const entryY = series.priceToCoordinate(this.position.entry_price);
-    const tpY = series.priceToCoordinate(this.position.tp_price);
-    const slY = series.priceToCoordinate(this.position.sl_price);
-    if (entryY == null || tpY == null || slY == null) return null;
+    if (entryY == null) return null;
+    const chartWidth = chart.chartElement().clientWidth;
     const ts = (this.position.entry_ts / 1000) as UTCTimestamp;
     const xRaw = chart.timeScale().timeToCoordinate(ts);
-    const xStart = xRaw == null ? 0 : Math.max(0, xRaw);
-    const xEnd = chart.chartElement().clientWidth;
-    return { entryY, tpY, slY, xStart, xEnd };
+    const xStart = xRaw == null ? 0 : clampToChart(xRaw, chartWidth);
+
+    if (isClosedPosition(this.position)) {
+      const exitY = series.priceToCoordinate(this.position.exit_price);
+      if (exitY == null) return null;
+      const exitTs = (this.position.exit_ts / 1000) as UTCTimestamp;
+      const exitRaw = chart.timeScale().timeToCoordinate(exitTs);
+      const xEnd = exitRaw == null ? chartWidth : clampToChart(exitRaw, chartWidth);
+      return { entryY, exitY, tpY: null, slY: null, xStart, xEnd, isClosed: true };
+    }
+
+    const tpY = series.priceToCoordinate(this.position.tp_price);
+    const slY = series.priceToCoordinate(this.position.sl_price);
+    if (tpY == null || slY == null) return null;
+    return { entryY, exitY: null, tpY, slY, xStart, xEnd: chartWidth, isClosed: false };
   }
 }
 
 function fmtPrice(n: number): string {
   return formatPrice(n);
+}
+
+function isClosedPosition(position: Position): position is Position & { exit_ts: number; exit_price: number } {
+  return position.exit_ts != null && position.exit_price != null;
+}
+
+function getClosedTradeStyle(position: Position): { fill: string; stroke: string } {
+  if (!isClosedPosition(position)) {
+    return { fill: COLOR.profitFill, stroke: COLOR.longEntry };
+  }
+  const pnl = pnlFraction(position.direction, position.entry_price, position.exit_price);
+  return pnl >= 0
+    ? { fill: COLOR.closedProfitFill, stroke: COLOR.closedProfitStroke }
+    : { fill: COLOR.closedLossFill, stroke: COLOR.closedLossStroke };
+}
+
+function drawAnchor(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function clampToChart(x: number, width: number): number {
+  return Math.max(0, Math.min(width, x));
 }

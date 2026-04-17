@@ -331,14 +331,18 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
     const isDatasetReset = pendingDatasetResetRef.current;
     const isPrepend    = prevFirstTs !== null && newFirstTs < prevFirstTs;
     const isTailMerge  = prevFirstTs !== null && newFirstTs === prevFirstTs;
+    const prependOffset = isPrepend && prevFirstTs !== null
+      ? Math.max(0, candles.findIndex(c => c.t === prevFirstTs))
+      : 0;
     prevFirstTsRef.current = newFirstTs;
 
     isLoadingMore.current = false;
     candlesRef.current = candles;
 
     // Preserve the current viewport on prepend and tail-append updates.
-    // Logical range is more stable than time range for replay/step-forward because
-    // it keeps the current bar-index window instead of re-centering on timestamps.
+    // When older bars are prepended, all existing logical indexes shift right by
+    // prependOffset bars, so we must shift the viewport as well or the chart will
+    // appear to drift into the past and keep triggering more history loads.
     const preserveRange = !isDatasetReset && (isPrepend || isTailMerge);
     const logicalRange = preserveRange ? chartRef.current?.timeScale().getVisibleLogicalRange() : null;
 
@@ -358,7 +362,11 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
     });
 
     if (logicalRange) {
-      chartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
+      chartRef.current?.timeScale().setVisibleLogicalRange(
+        prependOffset > 0
+          ? { from: logicalRange.from + prependOffset, to: logicalRange.to + prependOffset }
+          : logicalRange,
+      );
     } else if (isDatasetReset && pendingDatasetJumpRef.current && latestJumpRequestRef.current) {
       pendingDatasetJumpRef.current = false;
       applyJumpRequest(latestJumpRequestRef.current);
@@ -633,8 +641,7 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
     const series = seriesRef.current;
     if (!series) return;
     const map = positionPrimitivesRef.current;
-    const open = positions.filter(p => p.exit_ts == null);
-    const wantIds = new Set(open.map(p => p.id));
+    const wantIds = new Set(positions.map(p => p.id));
 
     for (const [id, prim] of map) {
       if (!wantIds.has(id)) {
@@ -642,7 +649,7 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
         map.delete(id);
       }
     }
-    for (const p of open) {
+    for (const p of positions) {
       const existing = map.get(p.id);
       if (existing) {
         existing.setPosition(p);
@@ -811,6 +818,7 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
         }
 
         if (x < d.xStart || x > d.xEnd) continue;
+        if (d.tpY == null || d.slY == null) continue;
         const dirLabel = p.direction === 'long' ? '多' : '空';
         const cands: Array<[PosField, number, string]> = [
           ['entry_price', d.entryY, dirLabel],
