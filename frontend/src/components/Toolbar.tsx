@@ -152,6 +152,7 @@ interface ToolbarProps {
   pivotN: number;
   swingThresholds: SwingThresholds;
   showForce: boolean;
+  showADX: boolean;
   showRanges: boolean;
   showMA: boolean;
   maLengths: number[];
@@ -166,6 +167,7 @@ interface ToolbarProps {
   onPivotNChange: (value: number) => void;
   onSwingThresholdsChange: (thresholds: SwingThresholds) => void;
   onToggleForce: () => void;
+  onToggleADX: () => void;
   onToggleRanges: () => void;
   onToggleMA: () => void;
   onMALengthsChange: (lengths: number[]) => void;
@@ -279,6 +281,7 @@ export function Toolbar({
   pivotN,
   swingThresholds,
   showForce,
+  showADX,
   showRanges,
   showMA,
   maLengths,
@@ -293,6 +296,7 @@ export function Toolbar({
   onPivotNChange,
   onSwingThresholdsChange,
   onToggleForce,
+  onToggleADX,
   onToggleRanges,
   onToggleMA,
   onMALengthsChange,
@@ -497,7 +501,7 @@ export function Toolbar({
 
       <div style={S.divider} />
 
-      <button style={ivBtnStyle(showForce)} onClick={onToggleForce} title="顯示或隱藏力道子圖">
+      <button style={ivBtnStyle(showForce)} onClick={onToggleForce} title="顯示力道子圖（force_ratio / 位移效率）">
         力道
       </button>
       <button style={ivBtnStyle(showRanges)} onClick={onToggleRanges} title="顯示或隱藏橫盤區間">

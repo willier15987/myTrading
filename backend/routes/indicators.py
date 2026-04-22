@@ -6,6 +6,7 @@ from ..core.atr import atr as calc_atr
 from ..core.candle_quality import candle_quality
 from ..core.force_analysis import force_analysis
 from ..core.displacement import displacement_efficiency
+from ..core.adx import adx_latest
 
 router = APIRouter()
 
@@ -45,7 +46,7 @@ def get_candle_indicators(req: CandleIndicatorRequest):
     try:
         # Fetch target candle + enough history for ATR
         candles = _fetch_candles_before(
-            conn, req.symbol, req.interval, req.timestamp, req.atr_period + 2
+            conn, req.symbol, req.interval, req.timestamp, 3 * req.atr_period
         )
     finally:
         conn.close()
@@ -60,6 +61,12 @@ def get_candle_indicators(req: CandleIndicatorRequest):
     atr_value = calc_atr(candles, req.atr_period)
     quality = candle_quality(target, atr_value)
     quality["atr"] = round(atr_value, 4)
+
+    adx_result = adx_latest(candles, req.atr_period)
+    quality["adx"]      = adx_result["adx"]
+    quality["plus_di"]  = adx_result["plus_di"]
+    quality["minus_di"] = adx_result["minus_di"]
+
     return quality
 
 

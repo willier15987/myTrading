@@ -5,6 +5,7 @@ from ..db import get_crypto_db
 from ..core.atr import atr as calc_atr
 from ..core.force_analysis import force_analysis
 from ..core.displacement import displacement_efficiency
+from ..core.adx import adx_series
 
 router = APIRouter()
 
@@ -22,7 +23,8 @@ def get_indicator_series(
     force_analysis and displacement_efficiency using a window of `lookback` bars.
     Returns a time series suitable for sub-chart display.
     """
-    fetch_n = limit + lookback + 14  # extra for ATR warmup
+    adx_period = 14
+    fetch_n = limit + lookback + 2 * adx_period  # warmup for ATR + ADX
 
     conn = get_crypto_db()
     try:
@@ -56,6 +58,7 @@ def get_indicator_series(
         return {"series": []}
 
     atr_value = calc_atr(all_candles, 14)
+    adx_full = adx_series(all_candles, adx_period)
 
     results = []
     start_idx = max(lookback, len(all_candles) - limit)
@@ -64,6 +67,7 @@ def get_indicator_series(
         window = all_candles[i - lookback + 1 : i + 1]
         fa = force_analysis(window, atr_value)
         de = displacement_efficiency(window)
+        adx_point = adx_full[i]
 
         results.append({
             "t": all_candles[i]["timestamp"],
@@ -71,6 +75,9 @@ def get_indicator_series(
             "count_ratio": fa["count_ratio"],
             "quality_ratio": round(min(fa["quality_ratio"], 5.0), 4),
             "displacement_efficiency": de,
+            "adx": adx_point["adx"],
+            "plus_di": adx_point["plus_di"],
+            "minus_di": adx_point["minus_di"],
         })
 
     return {"series": results}

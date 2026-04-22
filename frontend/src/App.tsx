@@ -123,6 +123,7 @@ export default function App() {
   const [pivotN, setPivotN] = useLocalStorage<number>('pivotN', 5);
   const [swingThresholds, setSwingThresholds] = useLocalStorage<SwingThresholds>('swingThresholds', DEFAULT_SWING_THRESHOLDS);
   const [showForce, setShowForce] = useLocalStorage<boolean>('showForce', false);
+  const [showADX, setShowADX] = useLocalStorage<boolean>('showADX', false);
   const [showRanges, setShowRanges] = useLocalStorage<boolean>('showRanges', false);
   const [showMA, setShowMA] = useLocalStorage<boolean>('showMA', false);
   const [maLengths, setMaLengths] = useLocalStorage<number[]>('maLengths', [20, 60]);
@@ -160,6 +161,7 @@ export default function App() {
   );
 
   const subChartSetLogicalRef = useRef<((from: number, to: number) => void) | null>(null);
+  const subChartSetCrosshairRef = useRef<((time: number | null) => void) | null>(null);
 
   const [selectedCandle, setSelectedCandle] = useState<Candle | null>(null);
   const [rangeStart, setRangeStart] = useState<Candle | null>(null);
@@ -378,7 +380,7 @@ export default function App() {
   }, [interval, latestTs, pivotN, replayState.enabled, reportError, showSwings, swingThresholds, symbol]);
 
   useEffect(() => {
-    if (!showForce || latestTs === 0) {
+    if (!(showForce || showADX) || latestTs === 0) {
       setIndicatorSeries([]);
       return;
     }
@@ -391,7 +393,7 @@ export default function App() {
     )
       .then(res => setIndicatorSeries(res.series))
       .catch(error => reportError('力道資料載入失敗。', error));
-  }, [interval, latestTs, replayState.enabled, reportError, showForce, symbol]);
+  }, [interval, latestTs, replayState.enabled, reportError, showForce, showADX, symbol]);
 
   useEffect(() => {
     if (!showRanges || latestTs === 0) {
@@ -975,7 +977,9 @@ export default function App() {
         onToggleSwings={() => setShowSwings(value => !value)}
         onPivotNChange={setPivotN}
         onSwingThresholdsChange={setSwingThresholds}
-        onToggleForce={() => setShowForce(value => !value)}
+        onToggleForce={() => { setShowForce(v => { if (!v) setShowADX(false); return !v; }); }}
+        showADX={showADX}
+        onToggleADX={() => { setShowADX(v => { if (!v) setShowForce(false); return !v; }); }}
         onToggleRanges={() => setShowRanges(value => !value)}
         onToggleMA={() => setShowMA(value => !value)}
         onMALengthsChange={setMaLengths}
@@ -1132,15 +1136,19 @@ export default function App() {
               if (indicatorLogicalOffset == null) return;
               subChartSetLogicalRef.current?.(from - indicatorLogicalOffset, to - indicatorLogicalOffset);
             }}
+            onCrosshairMove={(time) => subChartSetCrosshairRef.current?.(time)}
+            hideTimeAxis={showForce || showADX}
             datasetSessionKey={chartDatasetKey}
             jumpRequest={jumpRequest}
           />
-          {showForce && (
+          {(showForce || showADX) && (
             <div style={{ height: 160, flexShrink: 0, borderTop: '1px solid #2a2e39' }}>
               <SubChart
                 series={indicatorSeries}
                 timezone={timezone}
+                mode={showADX ? 'adx' : 'force'}
                 setLogicalRangeRef={subChartSetLogicalRef}
+                setCrosshairTimeRef={subChartSetCrosshairRef}
               />
             </div>
           )}

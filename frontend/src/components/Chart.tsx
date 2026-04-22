@@ -109,6 +109,8 @@ interface ChartProps {
   onCandleClick: (candle: Candle, isShift: boolean, clickedPrice: number | null) => void;
   onNeedMoreData: (beforeTs: number) => void;
   onVisibleLogicalRangeChange?: (from: number, to: number) => void;
+  onCrosshairMove?: (time: number | null) => void;
+  hideTimeAxis?: boolean;
   onPositionUpdate?: (id: string, updates: Partial<Position>) => void;
   datasetSessionKey: string;
   jumpRequest: { ts: number; token: number } | null;
@@ -116,7 +118,7 @@ interface ChartProps {
 
 type PosField = 'entry_price' | 'tp_price' | 'sl_price';
 
-export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, maConfigs, showMA, maType, tdConfig, positions, timezone, placingDirection, showLastPrice, selectedCandleTs, rangeStartTs, rangeEndTs, onCandleClick, onNeedMoreData, onVisibleLogicalRangeChange, onPositionUpdate, datasetSessionKey, jumpRequest }: ChartProps) {
+export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, maConfigs, showMA, maType, tdConfig, positions, timezone, placingDirection, showLastPrice, selectedCandleTs, rangeStartTs, rangeEndTs, onCandleClick, onNeedMoreData, onVisibleLogicalRangeChange, onCrosshairMove, hideTimeAxis, onPositionUpdate, datasetSessionKey, jumpRequest }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
   const seriesRef    = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -143,10 +145,12 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
   const onClickRef       = useRef(onCandleClick);
   const onMoreRef        = useRef(onNeedMoreData);
   const onLogicalRangeRef = useRef(onVisibleLogicalRangeChange);
+  const onCrosshairMoveRef = useRef(onCrosshairMove);
   const onPositionUpdateRef = useRef(onPositionUpdate);
   useLayoutEffect(() => { onClickRef.current        = onCandleClick; });
   useLayoutEffect(() => { onMoreRef.current         = onNeedMoreData; });
   useLayoutEffect(() => { onLogicalRangeRef.current = onVisibleLogicalRangeChange; });
+  useLayoutEffect(() => { onCrosshairMoveRef.current = onCrosshairMove; });
   useLayoutEffect(() => { onPositionUpdateRef.current = onPositionUpdate; });
 
   // Track shift key
@@ -225,6 +229,11 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
       onLogicalRangeRef.current?.(range.from, range.to);
     });
 
+    // Drive SubChart crosshair sync
+    chart.subscribeCrosshairMove((param) => {
+      onCrosshairMoveRef.current?.(param.time != null ? (param.time as number) : null);
+    });
+
     // Resize observer
     const ro = new ResizeObserver((entries) => {
       const e = entries[0];
@@ -262,6 +271,10 @@ export function Chart({ candles, marks, swings, showSwings, ranges, showRanges, 
       },
     });
   }, [timezone]);
+
+  useEffect(() => {
+    chartRef.current?.applyOptions({ timeScale: { visible: !hideTimeAxis } });
+  }, [hideTimeAxis]);
 
   const applyJumpRequest = (request: { ts: number; token: number }) => {
     if (!chartRef.current || candlesRef.current.length === 0) return;

@@ -53,6 +53,9 @@ export interface ForceAnalysis {
 
 export interface CandleIndicators extends CandleQuality {
   atr: number;
+  adx: number;
+  plus_di: number;
+  minus_di: number;
 }
 
 export interface RangeIndicators {
@@ -93,6 +96,9 @@ export interface IndicatorPoint {
   count_ratio: number;
   quality_ratio: number;
   displacement_efficiency: number;
+  adx: number;
+  plus_di: number;
+  minus_di: number;
 }
 
 export interface DetectedRange {
