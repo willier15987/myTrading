@@ -5,6 +5,7 @@ import type {
   IndicatorPoint,
   LabelType,
   Mark,
+  Position,
   RangeIndicators,
   SwingPoint,
   SymbolInfo,
@@ -93,6 +94,12 @@ export const api = {
 
   patchMark: (id: number, note: string): Promise<Mark> =>
     _patch(`${BASE}/marks/${id}`, { note }),
+
+  uploadPositionsToSheet: (data: {
+    positions: Position[];
+    timezone: string;
+  }): Promise<{ ok: boolean; sheet: string; received: number; appended: number; updated: number }> =>
+    _post(`${BASE}/sheets/replay-positions`, data),
 
   getSwings: (
     symbol: string,

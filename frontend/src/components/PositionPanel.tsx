@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { api } from '../api/client';
 import type { Position } from '../types';
-import { isOpen, pnlFraction, riskReward, positionsToCSV, downloadCSV } from '../utils/positions';
+import { isOpen, pnlFraction, riskReward } from '../utils/positions';
 import { formatPrice } from '../utils/price';
 import { type AppTimeZone, formatChartTime } from '../utils/time';
 import { useLocalStorage } from '../utils/useLocalStorage';
@@ -64,6 +65,7 @@ interface Props {
 
 export function PositionPanel({ symbol, interval, timezone, positions, currentPrice, onRequestClose, onDelete }: Props) {
   const [collapsed, setCollapsed] = useLocalStorage<boolean>('positionPanelCollapsed', false);
+  const [uploading, setUploading] = useState(false);
   const visible = positions
     .filter(p => p.symbol === symbol && p.interval === interval)
     .sort((a, b) => b.entry_ts - a.entry_ts);
@@ -80,11 +82,18 @@ export function PositionPanel({ symbol, interval, timezone, positions, currentPr
     );
   }
 
-  const handleExport = () => {
+  const handleUpload = async () => {
     if (positions.length === 0) return;
-    const csv = positionsToCSV(positions, timezone);
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    downloadCSV(`positions-${stamp}.csv`, csv);
+    setUploading(true);
+    try {
+      const result = await api.uploadPositionsToSheet({ positions, timezone });
+      window.alert(`已上傳到 Google Sheet：新增 ${result.appended} 筆，更新 ${result.updated} 筆。`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      window.alert(`上傳 Google Sheet 失敗：${message}`);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -92,9 +101,9 @@ export function PositionPanel({ symbol, interval, timezone, positions, currentPr
       <div style={S.header}>
         <span style={S.title}>倉位 ({visible.length})</span>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button style={S.btnSmall} onClick={handleExport} disabled={positions.length === 0}
-            title="匯出所有倉位 (包含其他商品/週期)">
-            匯出 CSV
+          <button style={S.btnSmall} onClick={handleUpload} disabled={positions.length === 0 || uploading}
+            title="上傳所有倉位到 Google Sheet (包含其他商品/週期)">
+            {uploading ? '上傳中...' : '上傳 Sheet'}
           </button>
           <button style={S.btnSmall} onClick={() => setCollapsed(true)} title="收起">▶</button>
         </div>
