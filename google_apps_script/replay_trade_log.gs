@@ -43,7 +43,7 @@ function onOpen() {
 }
 
 function doPost(e) {
-  const lock = LockService.getDocumentLock();
+  const lock = LockService.getScriptLock();
 
   try {
     lock.waitLock(30000);
